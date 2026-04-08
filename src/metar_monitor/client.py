@@ -8,7 +8,13 @@ from datetime import datetime, timezone
 
 import httpx
 
-from .config import MGM_URL, MGM_HEADERS, CONNECT_TIMEOUT, READ_TIMEOUT
+from .config import (
+    MGM_URL,
+    MGM_HEADERS,
+    CONNECT_TIMEOUT,
+    READ_TIMEOUT,
+    ANKARA_PROVINCE_PLATE,
+)
 from .models import Observation
 
 UTC = timezone.utc
@@ -16,6 +22,9 @@ UTC = timezone.utc
 # Forecast endpoints
 _DAILY_FORECAST_URL = "https://servis.mgm.gov.tr/web/tahminler/gunluk?istno=90615"
 _HOURLY_SHAPE_URL = "https://servis.mgm.gov.tr/web/tahminler/saatlik?istno=17130"
+_PROVINCE_BULK_URL = (
+    f"https://servis.mgm.gov.tr/web/sondurumlar/ilTumSondurum?ilPlaka={ANKARA_PROVINCE_PLATE}"
+)
 
 
 class MGMClient:
@@ -104,6 +113,36 @@ class MGMClient:
                     except (ValueError, TypeError):
                         continue
             return result
+        except Exception:
+            return []
+
+    async def fetch_ankara_station_ring(
+        self,
+        station_ids: tuple[int, ...],
+    ) -> list[Observation]:
+        """Fetch a selected set of Ankara province AWS stations in one bulk call."""
+        wanted = set(station_ids)
+        if not wanted:
+            return []
+        try:
+            response = await self._forecast_client.get(_PROVINCE_BULK_URL)
+            response.raise_for_status()
+            data = json.loads(response.content)
+            if not data or not isinstance(data, list):
+                return []
+            by_station: dict[int, Observation] = {}
+            for entry in data:
+                try:
+                    station_id = int(entry.get("istNo", 0))
+                except (TypeError, ValueError):
+                    continue
+                if station_id in wanted:
+                    by_station[station_id] = Observation.from_dict(entry)
+            return [
+                by_station[station_id]
+                for station_id in station_ids
+                if station_id in by_station
+            ]
         except Exception:
             return []
 

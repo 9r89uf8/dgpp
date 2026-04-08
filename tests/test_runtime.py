@@ -225,6 +225,14 @@ class TestTempReplay:
                 "ankara_peak_temp": 15,
                 "ankara_peak_time": "2026-04-08T12:00:00+00:00",
                 "ankara_shape": [],
+                "neighbor_ring": [
+                    {
+                        "station_id": 17128,
+                        "label": "ESENBOGA",
+                        "veri_zamani": "2026-04-08T07:30:00.000Z",
+                        "sicaklik": 13.0,
+                    }
+                ],
             },
         )
 
@@ -235,6 +243,7 @@ class TestTempReplay:
         assert rt.aws_history()[-1]["sicaklik"] == 13.0
         assert rt.metar_history()[-1]["ddhhmmz"] == "081200Z"
         assert rt.latest_forecast_snapshot()["ltac_daily_max"] == 16
+        assert rt.latest_forecast_snapshot()["neighbor_ring"][0]["label"] == "ESENBOGA"
 
     def test_runtime_falls_back_to_json_history_when_db_is_empty(self, tmp_path):
         state = MonitorState(state_dir=str(tmp_path / "state"))

@@ -144,6 +144,8 @@
 
 <div class="chart-container chart-scroll"><div id="temp-chart"></div></div>
 <div class="chart-note">Dashed orange line is Ankara center 3-hour forecast guidance. Red dotted line is the LTAC airport daily forecast max.</div>
+<div class="chart-container"><div id="neighbor-chart"></div></div>
+<div class="chart-note">Neighbor ring uses the 5-minute Ankara province AWS bulk fetch for Esenboga, Akyurt, Pursaklar, and Cubuk. These are comparison lines, not bias-corrected temperatures.</div>
 <div class="chart-container"><div id="forecast-revision-chart"></div></div>
 <div class="chart-note">Forecast revision history: red shows LTAC airport daily max, orange shows Ankara center 3-hour forecast peak temperature, and green shows the Ankara center forecast peak hour.</div>
 <div class="chart-container"><div id="forecast-bucket-chart"></div></div>
@@ -324,11 +326,19 @@ let cloudTimes = [], cloudVals = [];
 let humTimes = [], humVals = [], pressTimes = [], pressVals = [];
 let forecastRevisionTimes = [], forecastRevisionLtacMax = [], forecastRevisionAnkaraMax = [], forecastRevisionAnkaraPeakHour = [];
 let forecastBucketTraces = [];
+let neighborRingTraces = [];
 
 const MINUTE_TICKS = buildMinuteTicks(30, 60);
 const HOUR_TICK_VALS = [0, 3, 6, 9, 12, 15, 18, 21, 24];
 const HOUR_TICK_TEXT = HOUR_TICK_VALS.map((v) => formatHourLabel(v));
 const FORECAST_BUCKET_COLORS = ['#58a6ff', '#d2a8ff', '#3fb950', '#79c0ff', '#ffa657', '#f85149', '#a5d6ff', '#e3b3ff'];
+const NEIGHBOR_RING_ORDER = ['ESENBOGA', 'AKYURT', 'PURSAKLAR', 'CUBUK'];
+const NEIGHBOR_RING_COLORS = {
+  ESENBOGA: '#58a6ff',
+  AKYURT: '#ffa657',
+  PURSAKLAR: '#3fb950',
+  CUBUK: '#f85149',
+};
 
 const chartLayout = {
   paper_bgcolor: '#0d1117', plot_bgcolor: '#0d1117',
@@ -389,6 +399,14 @@ function initCharts() {
     height: 220,
   }, { responsive: true });
 
+  Plotly.newPlot('neighbor-chart', neighborRingTraces, {
+    ...chartLayout,
+    title: { text: 'Airport Ring Temperatures', font: { size: 13, color: '#8b949e' } },
+    yaxis: { ...chartLayout.yaxis, title: '°C', automargin: true },
+    height: 240,
+    legend: { orientation: 'h' },
+  }, { responsive: true });
+
   Plotly.newPlot('forecast-bucket-chart', forecastBucketTraces, {
     ...chartLayout,
     title: { text: 'Ankara 3h Bucket Revisions', font: { size: 13, color: '#8b949e' } },
@@ -442,6 +460,7 @@ function rebuildChartSeries() {
   forecastRevisionAnkaraMax = [];
   forecastRevisionAnkaraPeakHour = [];
   forecastBucketTraces = [];
+  neighborRingTraces = [];
 
   for (const e of rawAwsHistory) {
     if (localDayKeyFromIso(e.veri_zamani) !== currentAnkaraDayKey) continue;
@@ -519,6 +538,51 @@ function rebuildChartSeries() {
       line: { color: FORECAST_BUCKET_COLORS[idx % FORECAST_BUCKET_COLORS.length], width: 2 },
       marker: { size: 6 },
     }));
+
+  const neighborMap = new Map();
+  for (const snapshot of rawForecastHistory) {
+    if (localDayKeyFromIso(snapshot.fetched_at) !== currentAnkaraDayKey) continue;
+    for (const point of (snapshot.neighbor_ring || [])) {
+      const temp = point.sicaklik;
+      const pointTime = point.veri_zamani || snapshot.fetched_at;
+      if (temp == null || temp === -9999 || !pointTime) continue;
+      if (localDayKeyFromIso(pointTime) !== currentAnkaraDayKey) continue;
+      const label = String(point.label || `STATION ${point.station_id || ''}`).toUpperCase();
+      const stationId = String(point.station_id || label);
+      if (!neighborMap.has(label)) {
+        neighborMap.set(label, {
+          stationId,
+          points: new Map(),
+        });
+      }
+      const station = neighborMap.get(label);
+      station.points.set(String(pointTime), {
+        x: toChartMinute(pointTime),
+        y: temp,
+      });
+    }
+  }
+
+  neighborRingTraces = Array.from(neighborMap.entries())
+    .sort((a, b) => {
+      const idxA = NEIGHBOR_RING_ORDER.indexOf(a[0]);
+      const idxB = NEIGHBOR_RING_ORDER.indexOf(b[0]);
+      return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB);
+    })
+    .map(([label, station]) => {
+      const points = Array.from(station.points.values())
+        .filter((point) => point.x != null)
+        .sort((a, b) => a.x - b.x);
+      return {
+        x: points.map((point) => point.x),
+        y: points.map((point) => point.y),
+        name: label,
+        type: 'scatter',
+        mode: 'lines+markers',
+        line: { color: NEIGHBOR_RING_COLORS[label] || '#8b949e', width: 2 },
+        marker: { size: 6 },
+      };
+    });
 }
 
 function updateForecastSeries(snap) {
@@ -558,6 +622,13 @@ function updateCharts() {
     x: [forecastRevisionTimes, forecastRevisionTimes, forecastRevisionTimes],
     y: [forecastRevisionLtacMax, forecastRevisionAnkaraMax, forecastRevisionAnkaraPeakHour],
   });
+  Plotly.react('neighbor-chart', neighborRingTraces, {
+    ...chartLayout,
+    title: { text: 'Airport Ring Temperatures', font: { size: 13, color: '#8b949e' } },
+    yaxis: { ...chartLayout.yaxis, title: '°C', automargin: true },
+    height: 240,
+    legend: { orientation: 'h' },
+  }, { responsive: true });
   Plotly.react('forecast-bucket-chart', forecastBucketTraces, {
     ...chartLayout,
     title: { text: 'Ankara 3h Bucket Revisions', font: { size: 13, color: '#8b949e' } },

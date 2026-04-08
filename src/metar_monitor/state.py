@@ -148,6 +148,7 @@ class MonitorState:
         ankara_peak_temp: float | None,
         ankara_peak_time_iso: str | None,
         ankara_shape: list[dict] | None = None,
+        neighbor_ring: list[dict] | None = None,
     ) -> None:
         """Record a forecast revision snapshot and persist."""
         self.forecast_history.append({
@@ -156,6 +157,7 @@ class MonitorState:
             "ankara_peak_temp": ankara_peak_temp,
             "ankara_peak_time": ankara_peak_time_iso,
             "ankara_shape": ankara_shape or [],
+            "neighbor_ring": neighbor_ring or [],
         })
         if len(self.forecast_history) > MAX_FORECAST_HISTORY:
             self.forecast_history = self.forecast_history[-MAX_FORECAST_HISTORY:]

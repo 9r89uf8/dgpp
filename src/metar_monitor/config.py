@@ -11,6 +11,16 @@ AIRPORT_ELEVATION_M = 959
 MGM_OBS_ISTNO = 17128
 MGM_DAILY_FORECAST_ISTNO = 90615
 MGM_SHAPE_FORECAST_ISTNO = 17130
+ANKARA_PROVINCE_PLATE = 6
+
+# Lightweight comparison ring around LTAC for the web dashboard.
+# These are fetched together from the Ankara province bulk AWS feed.
+NEIGHBOR_RING_STATIONS = (
+    {"station_id": 17128, "label": "ESENBOGA"},
+    {"station_id": 18240, "label": "AKYURT"},
+    {"station_id": 18243, "label": "PURSAKLAR"},
+    {"station_id": 18242, "label": "CUBUK"},
+)
 
 # MGM API endpoint for Ankara Esenboğa Airport (LTAC) observations
 MGM_URL = "https://servis.mgm.gov.tr/web/sondurumlar?istno=17128"

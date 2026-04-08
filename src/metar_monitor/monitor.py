@@ -15,6 +15,7 @@ from .config import (
     FORECAST_REFRESH_S,
     METAR_UNAVAILABLE,
     MGM_DAILY_FORECAST_ISTNO,
+    NEIGHBOR_RING_STATIONS,
     MGM_OBS_ISTNO,
     MGM_SHAPE_FORECAST_ISTNO,
 )
@@ -28,6 +29,13 @@ from .temp_tracker import TempTracker, TempEvent, TempEventType
 
 UTC = timezone.utc
 log = logging.getLogger(__name__)
+_NEIGHBOR_RING_STATION_IDS = tuple(
+    int(station["station_id"]) for station in NEIGHBOR_RING_STATIONS
+)
+_NEIGHBOR_RING_LABELS = {
+    int(station["station_id"]): str(station["label"])
+    for station in NEIGHBOR_RING_STATIONS
+}
 
 # Type for callbacks
 EventCallback = Callable[[MetarEvent, PollStats], None]
@@ -141,6 +149,7 @@ class Monitor:
         fetched_at = datetime.now(UTC)
         daily_max: float | None = None
         shape: list[tuple[datetime, float]] = []
+        neighbor_ring: list[dict] = []
 
         try:
             daily_max = await self.client.fetch_ltac_daily_forecast()
@@ -158,7 +167,19 @@ class Monitor:
         except Exception as e:
             log.warning("Ankara shape fetch failed: %s", e)
 
-        if daily_max is not None or shape:
+        try:
+            ring_observations = await self.client.fetch_ankara_station_ring(
+                _NEIGHBOR_RING_STATION_IDS,
+            )
+            neighbor_ring = [
+                self._neighbor_ring_entry(obs)
+                for obs in ring_observations
+                if obs.sicaklik != -9999 and obs.veri_zamani
+            ]
+        except Exception as e:
+            log.warning("Ankara station ring fetch failed: %s", e)
+
+        if daily_max is not None or shape or neighbor_ring:
             peak_temp: float | None = None
             peak_time_iso: str | None = None
             snapshot = {
@@ -173,6 +194,7 @@ class Monitor:
                     }
                     for point_time, temp_c in shape
                 ],
+                "neighbor_ring": neighbor_ring,
             }
             if shape:
                 peak_time, peak_temp = max(shape, key=lambda x: x[1])
@@ -195,6 +217,7 @@ class Monitor:
                     ankara_peak_temp=peak_temp,
                     ankara_peak_time_iso=peak_time_iso,
                     ankara_shape=snapshot["ankara_shape"],
+                    neighbor_ring=neighbor_ring,
                 )
 
         self._last_forecast_fetch = _time.monotonic()
@@ -331,6 +354,22 @@ class Monitor:
             )
             if capture:
                 self.state.record_capture(capture)
+
+    @staticmethod
+    def _neighbor_ring_entry(obs: Observation) -> dict:
+        station_id = int(obs.ist_no)
+        return {
+            "station_id": station_id,
+            "label": _NEIGHBOR_RING_LABELS.get(station_id, f"STATION {station_id}"),
+            "veri_zamani": obs.veri_zamani,
+            "sicaklik": obs.sicaklik,
+            "nem": obs.nem,
+            "ruzgar_hiz": obs.ruzgar_hiz,
+            "ruzgar_yon": obs.ruzgar_yon,
+            "denize_indirgenmis_basinc": obs.denize_indirgenmis_basinc,
+            "kapalilik": obs.kapalilik,
+            "hadise_kodu": obs.hadise_kodu,
+        }
 
     def _should_persist_surface_observation(self, obs: Observation) -> bool:
         return bool(obs.veri_zamani) and obs.veri_zamani != self.state.last_seen_veri_zamani

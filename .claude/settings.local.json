@@ -15,7 +15,9 @@
       "Bash(curl -sS -o /dev/null -w '  HTTP: %{http_code} | Type: %{content_type} | Size: %{size_download}B\\\\n' -m 5 http://d.liveatc.net/__TRACKED_VAR__)",
       "Bash(curl:*)",
       "Bash(.venv/Scripts/pytest tests/ -q)",
-      "Bash(.venv/Scripts/python -c \"from metar_monitor.web.server import create_app; from metar_monitor.runtime import Runtime; print\\('Web imports OK'\\)\")"
+      "Bash(.venv/Scripts/python -c \"from metar_monitor.web.server import create_app; from metar_monitor.runtime import Runtime; print\\('Web imports OK'\\)\")",
+      "WebFetch(domain:servis.mgm.gov.tr)",
+      "Bash(python -m json.tool)"
     ]
   }
 }
