@@ -560,6 +560,59 @@ function setError(message) {
   }
 }
 
+function applyImmediateMetarEvent(payload) {
+  if (!payload) return;
+  if (!lastSnapshot) lastSnapshot = {};
+  lastSnapshot.current_metar = payload.metar_raw || lastSnapshot.current_metar || '';
+  lastSnapshot.current_metar_detected_at = payload.detected_at || lastSnapshot.current_metar_detected_at || null;
+  lastSnapshot.last_error = null;
+
+  rawMetarHistory.push({
+    metar: payload.metar_raw,
+    ddhhmmz: payload.ddhhmmz,
+    detected_at: payload.detected_at,
+    event_type: payload.event_type,
+  });
+
+  document.getElementById('metar-box').textContent = payload.metar_raw || '';
+  document.getElementById('metar-box').classList.add('new');
+  setTimeout(() => document.getElementById('metar-box').classList.remove('new'), 5000);
+
+  updateStatus(lastSnapshot);
+}
+
+function applyImmediateAwsEvent(payload) {
+  if (!payload) return;
+  if (!lastSnapshot) lastSnapshot = {};
+  if (!lastSnapshot.current_observation) lastSnapshot.current_observation = {};
+
+  rawAwsHistory.push(payload);
+  lastSnapshot.current_observation = {
+    ...lastSnapshot.current_observation,
+    ...payload,
+  };
+  lastSnapshot.last_error = null;
+
+  updateStatus(lastSnapshot);
+}
+
+function applyImmediateTempEvent(payload) {
+  if (!payload) return;
+  if (!lastSnapshot) lastSnapshot = {};
+  if (!lastSnapshot.temp_tracker) lastSnapshot.temp_tracker = {};
+
+  lastSnapshot.temp_tracker = {
+    ...lastSnapshot.temp_tracker,
+    state: payload.state ?? lastSnapshot.temp_tracker.state,
+    observed_max_raw: payload.observed_max_raw ?? lastSnapshot.temp_tracker.observed_max_raw,
+    observed_max_time: payload.observed_max_time ?? lastSnapshot.temp_tracker.observed_max_time,
+    trend_10m: payload.trend_10m ?? lastSnapshot.temp_tracker.trend_10m,
+    current_temp: payload.current_temp_raw ?? lastSnapshot.temp_tracker.current_temp,
+  };
+
+  updateStatus(lastSnapshot);
+}
+
 function updateStatus(snap) {
   if (!snap) return;
   lastSnapshot = snap;
@@ -669,17 +722,13 @@ function connect() {
       updateStatus(msg.snapshot);
     }
     else if (msg.type === 'aws_update') {
-      rawAwsHistory.push(msg.payload);
+      applyImmediateAwsEvent(msg.payload);
     }
     else if (msg.type === 'metar') {
-      const p = msg.payload;
-      document.getElementById('metar-box').textContent = p.metar_raw;
-      document.getElementById('metar-box').classList.add('new');
-      setTimeout(() => document.getElementById('metar-box').classList.remove('new'), 5000);
-      rawMetarHistory.push({
-        metar: p.metar_raw,
-        detected_at: p.detected_at,
-      });
+      applyImmediateMetarEvent(msg.payload);
+    }
+    else if (msg.type === 'temp_state' || msg.type === 'temp_forecast') {
+      applyImmediateTempEvent(msg.payload);
     }
     else if (msg.type === 'error') {
       setError(msg.payload.error || 'unknown');

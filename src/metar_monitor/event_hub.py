@@ -183,6 +183,7 @@ class EventHub:
                 seq=self._next_seq(),
                 created_at=now,
                 payload={
+                    "detected_at": event.detected_at.isoformat(),
                     "veri_zamani": obs.veri_zamani if obs else "",
                     "sicaklik": obs.sicaklik if obs else None,
                     "nem": obs.nem if obs else None,
