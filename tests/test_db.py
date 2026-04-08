@@ -185,3 +185,63 @@ class TestDatabase:
 
         assert len(rows) == 1
         assert rows[0]["sicaklik"] == 13.2
+
+    def test_clear_airport_history_removes_fact_rows_but_keeps_config(self, tmp_path):
+        db = self._make_db(tmp_path)
+
+        db.record_metar(
+            airport_icao="LTAC",
+            source_provider="mgm",
+            source_external_id="17128",
+            metar_raw="LTAC 081200Z 18005KT 9999 15/05 Q1018",
+            normalized_metar="LTAC 081200Z 18005KT 9999 15/05 Q1018",
+            ddhhmmz="081200Z",
+            event_type="new",
+            detected_at="2026-04-08T12:01:00+00:00",
+        )
+        db.record_surface_observation(
+            airport_icao="LTAC",
+            source_provider="mgm",
+            source_external_id="17128",
+            veri_zamani="2026-04-08T07:30:00.000Z",
+            detected_at="2026-04-08T07:30:10+00:00",
+            sicaklik=13.0,
+        )
+        db.record_forecast_fetch(
+            airport_icao="LTAC",
+            source_provider="mgm",
+            source_external_id="17130",
+            forecast_kind="combined",
+            fetched_at="2026-04-08T10:00:00+00:00",
+            raw_json={"fetched_at": "2026-04-08T10:00:00+00:00"},
+        )
+        db.record_capture(
+            airport_icao="LTAC",
+            ddhhmmz="081200Z",
+            detection_utc="2026-04-08T12:01:00+00:00",
+            delay_from_bulletin_s=60.0,
+            source="mgm",
+            event_type="new",
+        )
+
+        counts = db.clear_airport_history("LTAC")
+
+        assert counts == {
+            "metar_events": 1,
+            "surface_observations": 1,
+            "forecast_fetches": 1,
+            "capture_log": 1,
+        }
+        assert db.get_metar_history("LTAC") == []
+        assert db.get_surface_history("LTAC") == []
+        assert db.get_forecast_history("LTAC") == []
+
+        conn = sqlite3.connect(str(db.path))
+        try:
+            airport_count = conn.execute("SELECT COUNT(*) FROM airports").fetchone()[0]
+            source_count = conn.execute("SELECT COUNT(*) FROM airport_sources").fetchone()[0]
+        finally:
+            conn.close()
+
+        assert airport_count == 1
+        assert source_count == 3

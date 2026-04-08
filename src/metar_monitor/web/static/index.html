@@ -69,6 +69,33 @@
   #connection-status { font-size: 11px; }
   .connected { color: #3fb950; }
   .disconnected { color: #f85149; }
+  #admin-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .danger-button {
+    appearance: none;
+    border: 1px solid #da3633;
+    background: #2d1117;
+    color: #ff7b72;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .danger-button:hover:not(:disabled) {
+    background: #3d151c;
+  }
+  .danger-button:disabled {
+    opacity: 0.65;
+    cursor: wait;
+  }
+  #admin-status {
+    color: #8b949e;
+    font-size: 12px;
+    min-height: 16px;
+  }
 </style>
 </head>
 <body>
@@ -93,6 +120,10 @@
   </div>
   <div>
     <span id="connection-status" class="disconnected">DISCONNECTED</span>
+  </div>
+  <div id="admin-controls">
+    <button id="clear-history-btn" class="danger-button" type="button">Clear SQLite History</button>
+    <span id="admin-status"></span>
   </div>
 </div>
 
@@ -560,6 +591,10 @@ function setError(message) {
   }
 }
 
+function setAdminStatus(message) {
+  document.getElementById('admin-status').textContent = message || '';
+}
+
 function applyImmediateMetarEvent(payload) {
   if (!payload) return;
   if (!lastSnapshot) lastSnapshot = {};
@@ -633,6 +668,9 @@ function updateStatus(snap) {
   if (obs && obs.sicaklik != null) {
     document.getElementById('current-temp').innerHTML = `<strong>${obs.sicaklik.toFixed(1)}°C</strong>`;
   }
+  else {
+    document.getElementById('current-temp').innerHTML = '<strong>--</strong>';
+  }
   const tt = snap.temp_tracker;
   if (tt) {
     const el = document.getElementById('temp-state');
@@ -641,8 +679,14 @@ function updateStatus(snap) {
     if (tt.observed_max_raw != null) {
       document.getElementById('temp-max').textContent = `Max: ${tt.observed_max_raw.toFixed(1)}°C`;
     }
+    else {
+      document.getElementById('temp-max').textContent = 'Max: --';
+    }
     if (tt.forecast_daily_max != null) {
       document.getElementById('temp-forecast').textContent = `Forecast: ${tt.forecast_daily_max.toFixed(0)}°C`;
+    }
+    else {
+      document.getElementById('temp-forecast').textContent = 'Forecast: --';
     }
   }
   const ps = snap.poll_stats;
@@ -681,6 +725,36 @@ function updateStatus(snap) {
     ['Cloud', fmtCloud(aws.kapalilik)],
   ]);
   updateCharts();
+}
+
+async function clearHistory() {
+  if (!confirm('Delete all persisted LTAC history from SQLite? Live polling will keep running.')) {
+    return;
+  }
+
+  const button = document.getElementById('clear-history-btn');
+  button.disabled = true;
+  setAdminStatus('Clearing...');
+
+  try {
+    const response = await fetch('/api/admin/clear-history', { method: 'POST' });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.detail || 'request failed');
+    }
+
+    rawAwsHistory = payload.aws_history || [];
+    rawMetarHistory = payload.metar_history || [];
+    rawForecastHistory = payload.forecast_history || [];
+    setError('');
+    updateStatus(payload.snapshot);
+    setAdminStatus(`Cleared ${payload.cleared?.sqlite_total_rows ?? 0} SQLite rows`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    setAdminStatus(`Clear failed: ${message}`);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 // Clock + schedule countdowns
@@ -748,6 +822,7 @@ function connect() {
 
 initCharts();
 updateScheduleCountdowns();
+document.getElementById('clear-history-btn').addEventListener('click', clearHistory);
 connect();
 </script>
 </body>

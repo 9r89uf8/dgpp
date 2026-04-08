@@ -531,3 +531,25 @@ class Database:
             filtered_by_veri.values(),
             key=lambda row: str(row.get("veri_zamani", "")),
         )
+
+    def clear_airport_history(self, airport_icao: str) -> dict[str, int]:
+        """Delete history rows for one airport while preserving config tables."""
+        tables = (
+            "metar_events",
+            "surface_observations",
+            "forecast_fetches",
+            "capture_log",
+        )
+        counts: dict[str, int] = {}
+        with self._connect() as conn:
+            for table in tables:
+                row = conn.execute(
+                    f"SELECT COUNT(*) AS row_count FROM {table} WHERE airport_icao = ?",
+                    (airport_icao,),
+                ).fetchone()
+                counts[table] = int(row["row_count"]) if row else 0
+                conn.execute(
+                    f"DELETE FROM {table} WHERE airport_icao = ?",
+                    (airport_icao,),
+                )
+        return counts

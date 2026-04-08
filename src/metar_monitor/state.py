@@ -167,3 +167,18 @@ class MonitorState:
         self.last_seen_ddhhmmz = ddhhmmz
         self.last_seen_at = detected_at_iso
         self.save()
+
+    def clear_history(self) -> dict[str, int]:
+        """Clear persisted history lists while preserving detector last-seen state."""
+        counts = {
+            "history": len(self.history),
+            "aws_history": len(self.aws_history),
+            "capture_log": len(self.capture_log),
+            "forecast_history": len(self.forecast_history),
+        }
+        self.history = []
+        self.aws_history = []
+        self.capture_log = []
+        self.forecast_history = []
+        self.save()
+        return counts

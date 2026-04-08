@@ -273,3 +273,103 @@ class TestTempReplay:
         assert rt.metar_history()[-1]["ddhhmmz"] == "081200Z"
         assert rt.aws_history()[-1]["sicaklik"] == 13.0
         assert rt.latest_forecast_snapshot()["ltac_daily_max"] == 16
+
+    def test_clear_persisted_history_clears_db_state_and_tracker(self, tmp_path):
+        state = MonitorState(state_dir=str(tmp_path / "state"))
+        state.history = [
+            {
+                "metar": "LTAC 081200Z 18005KT 9999 13/05 Q1018",
+                "ddhhmmz": "081200Z",
+                "detected_at": "2026-04-08T12:01:00+00:00",
+                "event_type": "new",
+            }
+        ]
+        state.aws_history = [
+            {
+                "veri_zamani": "2026-04-08T07:30:00.000Z",
+                "detected_at": "2026-04-08T07:30:10+00:00",
+                "sicaklik": 13.0,
+                "nem": 40,
+                "ruzgar_hiz": 5.0,
+                "gorus": 10000,
+            }
+        ]
+        state.forecast_history = [
+            {
+                "fetched_at": "2026-04-08T10:00:00+00:00",
+                "ltac_daily_max": 16,
+                "ankara_peak_temp": 15,
+                "ankara_peak_time": "2026-04-08T12:00:00+00:00",
+                "ankara_shape": [],
+            }
+        ]
+        state.last_seen_metar = "LTAC 081200Z 18005KT 9999 13/05 Q1018"
+        state.last_seen_ddhhmmz = "081200Z"
+        state.last_seen_at = "2026-04-08T12:01:00+00:00"
+        state.last_seen_veri_zamani = "2026-04-08T07:30:00.000Z"
+        state.save()
+
+        db = _make_db(tmp_path)
+        db.record_metar(
+            airport_icao="LTAC",
+            source_provider="mgm",
+            source_external_id="17128",
+            metar_raw="LTAC 081200Z 18005KT 9999 13/05 Q1018",
+            normalized_metar="LTAC 081200Z 18005KT 9999 13/05 Q1018",
+            ddhhmmz="081200Z",
+            event_type="new",
+            detected_at="2026-04-08T12:01:00+00:00",
+        )
+        db.record_surface_observation(
+            airport_icao="LTAC",
+            source_provider="mgm",
+            source_external_id="17128",
+            veri_zamani="2026-04-08T07:30:00.000Z",
+            detected_at="2026-04-08T07:30:10+00:00",
+            sicaklik=13.0,
+            hissedilen_sicaklik=13.0,
+            nem=40,
+            ruzgar_hiz=5.0,
+            ruzgar_yon=180,
+            denize_indirgenmis_basinc=1018.0,
+            aktuel_basinc=900.0,
+            gorus=10000,
+            kapalilik=2,
+            hadise_kodu="PB",
+        )
+        db.record_forecast_fetch(
+            airport_icao="LTAC",
+            source_provider="mgm",
+            source_external_id="90615+17130",
+            forecast_kind="combined",
+            fetched_at="2026-04-08T10:00:00+00:00",
+            raw_json={
+                "fetched_at": "2026-04-08T10:00:00+00:00",
+                "ltac_daily_max": 16,
+                "ankara_peak_temp": 15,
+                "ankara_peak_time": "2026-04-08T12:00:00+00:00",
+                "ankara_shape": [],
+            },
+        )
+
+        client = MGMClient()
+        rt = Runtime(client=client, state=state, db=db)
+
+        cleared = rt.clear_persisted_history()
+
+        assert cleared["ok"] is True
+        assert cleared["cleared"]["sqlite_total_rows"] == 3
+        assert cleared["metar_history"] == []
+        assert cleared["aws_history"] == []
+        assert cleared["forecast_history"] == []
+        assert rt.metar_history() == []
+        assert rt.aws_history() == []
+        assert rt.forecast_history() == []
+        assert rt.latest_forecast_snapshot() is None
+        assert rt.temp_tracker.samples == []
+        assert rt.temp_tracker.observed_max_raw is None
+        assert rt.temp_tracker.forecast_daily_max is None
+        assert rt.state.history == []
+        assert rt.state.aws_history == []
+        assert rt.state.forecast_history == []
+        assert rt.state.last_seen_metar == "LTAC 081200Z 18005KT 9999 13/05 Q1018"

@@ -176,6 +176,13 @@ class TempTracker:
         self._down_positive_streak = 0
         self.nowcast = TempNowcast()
 
+    def clear_history(self, clear_forecast: bool = True) -> None:
+        """Clear tracked samples after an operator history wipe."""
+        self._reset()
+        if clear_forecast:
+            self.forecast_daily_max = None
+            self.ankara_shape = None
+
     def is_unique(self, veri_zamani: str, sicaklik: float | None = None) -> bool:
         """Treat ``veriZamani`` as the canonical LTAC observation key."""
         return bool(veri_zamani) and veri_zamani != self._last_veri_zamani

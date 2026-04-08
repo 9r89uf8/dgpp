@@ -46,6 +46,10 @@ def create_app(runtime) -> FastAPI:
     async def forecast_history(since: str | None = None, limit: int | None = None):
         return rt.forecast_history(since=since, limit=limit)
 
+    @app.post("/api/admin/clear-history")
+    async def clear_history():
+        return rt.clear_persisted_history()
+
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):
         await ws.accept()

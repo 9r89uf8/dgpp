@@ -352,6 +352,34 @@ class Runtime:
             return snapshot
         return self.state.forecast_history[-1] if self.state.forecast_history else None
 
+    def clear_persisted_history(self) -> dict:
+        """Clear persisted history while keeping the live monitor running."""
+        sqlite_counts = (
+            self.db.clear_airport_history(AIRPORT_ICAO)
+            if self.db
+            else {
+                "metar_events": 0,
+                "surface_observations": 0,
+                "forecast_fetches": 0,
+                "capture_log": 0,
+            }
+        )
+        state_counts = self.state.clear_history()
+        self.temp_tracker.clear_history(clear_forecast=True)
+
+        return {
+            "ok": True,
+            "cleared": {
+                "sqlite": sqlite_counts,
+                "sqlite_total_rows": sum(sqlite_counts.values()),
+                "state": state_counts,
+            },
+            "snapshot": self.snapshot(),
+            "aws_history": self.aws_history(),
+            "metar_history": self.metar_history(),
+            "forecast_history": self.forecast_history(),
+        }
+
     def handle_event(self, event: MetarEvent, stats: PollStats) -> None:
         """Update mutable fields from monitor events."""
         if event.event_type == EventType.FETCH_ERROR:
