@@ -1,0 +1,16 @@
+[Unit]
+Description=LTAC METAR Monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=metar
+WorkingDirectory=/opt/metar-monitor
+ExecStart=/opt/metar-monitor/.venv/bin/python -m metar_monitor --web --db-path /var/lib/metar-monitor/metar.db
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LTAC METAR Monitor</title>
+<script src="/static/plotly.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #c9d1d9; }
+  #status-bar {
+    background: #161b22; padding: 12px 20px; border-bottom: 1px solid #30363d;
+    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;
+  }
+  .status-item { font-size: 13px; }
+  .status-item strong { color: #58a6ff; }
+  .status-label { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  #metar-box {
+    background: #161b22; margin: 10px 20px; padding: 12px 16px; border-radius: 6px;
+    border: 1px solid #30363d; font-family: monospace; font-size: 14px; word-break: break-all;
+  }
+  #metar-box.new { border-color: #3fb950; background: #0d1117; }
+  #error-bar {
+    display: none; margin: 0 20px 10px; padding: 8px 12px; border-radius: 6px;
+    border: 1px solid #da3633; background: #2d1117; color: #ff7b72;
+    font-family: monospace; font-size: 12px;
+  }
+  #error-bar.visible { display: block; }
+  .card-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 10px; margin: 0 20px 10px;
+  }
+  .obs-card {
+    background: #161b22; border: 1px solid #30363d; border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .obs-card h3 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;
+    color: #8b949e; margin-bottom: 8px;
+  }
+  .obs-time {
+    color: #8b949e; font-size: 12px; margin-bottom: 8px;
+  }
+  .obs-grid {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px;
+    font-size: 13px;
+  }
+  .obs-row strong { color: #58a6ff; }
+  #clock { color: #8b949e; font-size: 13px; }
+  #temp-state { font-weight: bold; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+  .state-RISING { background: #238636; color: white; }
+  .state-FLAT { background: #9e6a03; color: white; }
+  .state-NEAR_PEAK { background: #da3633; color: white; }
+  .state-PROVISIONAL_PEAK { background: #f85149; color: white; }
+  .state-CONFIRMED_PEAK { background: #8b1a1a; color: white; }
+  .state-STALE { background: #484f58; color: white; }
+  .chart-container { margin: 5px 20px; }
+  .chart-scroll {
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 4px;
+  }
+  #temp-chart {
+    min-width: 1800px;
+  }
+  .chart-note {
+    margin: 0 20px 10px; color: #8b949e; font-size: 12px;
+  }
+  #connection-status { font-size: 11px; }
+  .connected { color: #3fb950; }
+  .disconnected { color: #f85149; }
+</style>
+</head>
+<body>
+
+<div id="status-bar">
+  <div>
+    <span class="status-label">Ankara</span>
+    <span id="clock" class="status-item"></span>
+  </div>
+  <div>
+    <span class="status-label">Temp</span>
+    <span id="current-temp" class="status-item"><strong>--</strong></span>
+    <span id="temp-state"></span>
+    <span id="temp-max" class="status-item" style="margin-left:8px">Max: --</span>
+    <span id="temp-forecast" class="status-item" style="margin-left:8px">Forecast: --</span>
+  </div>
+  <div>
+    <span class="status-label">Polling</span>
+    <span id="poll-info" class="status-item">--</span>
+    <span id="next-metar" class="status-item" style="margin-left:8px">Next METAR: --</span>
+    <span id="next-aws" class="status-item" style="margin-left:8px">Next AWS: --</span>
+  </div>
+  <div>
+    <span id="connection-status" class="disconnected">DISCONNECTED</span>
+  </div>
+</div>
+
+<div id="metar-box">Waiting for METAR...</div>
+<div id="error-bar"></div>
+<div class="card-grid">
+  <div class="obs-card">
+    <h3>Latest METAR</h3>
+    <div id="latest-metar-time" class="obs-time">--</div>
+    <div id="latest-metar-grid" class="obs-grid"></div>
+  </div>
+  <div class="obs-card">
+    <h3>Latest AWS Observation</h3>
+    <div id="latest-aws-time" class="obs-time">--</div>
+    <div id="latest-aws-grid" class="obs-grid"></div>
+  </div>
+</div>
+
+<div class="chart-container chart-scroll"><div id="temp-chart"></div></div>
+<div class="chart-note">Dashed orange line is Ankara center 3-hour forecast guidance. Red dotted line is the LTAC airport daily forecast max.</div>
+<div class="chart-container"><div id="forecast-revision-chart"></div></div>
+<div class="chart-note">Forecast revision history: red shows LTAC airport daily max, orange shows Ankara center 3-hour forecast peak temperature, and green shows the Ankara center forecast peak hour.</div>
+<div class="chart-container"><div id="forecast-bucket-chart"></div></div>
+<div class="chart-note">Ankara 3-hour bucket revisions: x-axis is when we fetched the forecast, each line is a future valid bucket like 3:00 PM or 6:00 PM. When a bucket disappears after its valid time passes, its line stops.</div>
+<div class="chart-container"><div id="wind-chart"></div></div>
+<div class="chart-container"><div id="cloud-chart"></div></div>
+<div class="chart-note">Cloud cover uses MGM `kapalilik` in oktas: 0 clear, 1-2 FEW, 3-4 SCT, 5-7 BKN, 8 OVC.</div>
+<div class="chart-container"><div id="hum-press-chart"></div></div>
+
+<script>
+const ISTANBUL_OFFSET = 3 * 60 * 60 * 1000; // UTC+3
+const METAR_PUBLISH_MINUTES = [20, 50];
+const AWS_PUBLISH_MINUTES = [6, 15, 27, 39, 48, 54];
+let currentAnkaraDayKey = getCurrentAnkaraDayKey();
+let lastSnapshot = null;
+let rawAwsHistory = [];
+let rawMetarHistory = [];
+let rawForecastHistory = [];
+
+function toLocal(iso) {
+  const d = new Date(iso);
+  return new Date(d.getTime() + ISTANBUL_OFFSET);
+}
+
+function toChartMinute(iso) {
+  if (!iso) return null;
+  const d = toLocal(iso);
+  return d.getUTCHours() * 60 + d.getUTCMinutes() + (d.getUTCSeconds() / 60);
+}
+
+function fmtTime(d) {
+  return d.toISOString().slice(11, 19);
+}
+
+function getCurrentAnkaraDayKey() {
+  return new Date(Date.now() + ISTANBUL_OFFSET).toISOString().slice(0, 10);
+}
+
+function localDayKeyFromIso(iso) {
+  if (!iso) return null;
+  return toLocal(iso).toISOString().slice(0, 10);
+}
+
+function formatLocalTime(iso) {
+  if (!iso) return '--';
+  const d = toLocal(iso);
+  const h = d.getUTCHours();
+  const m = d.getUTCMinutes();
+  const s = d.getUTCSeconds();
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${h12}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')} ${ampm}`;
+}
+
+function toHourDecimal(iso) {
+  if (!iso) return null;
+  const d = toLocal(iso);
+  return d.getUTCHours() + (d.getUTCMinutes() / 60);
+}
+
+function formatHourLabel(hourDecimal) {
+  if (hourDecimal == null || Number.isNaN(hourDecimal)) return '--';
+  const roundedMinutes = Math.round(hourDecimal * 60);
+  const h24 = Math.floor(roundedMinutes / 60) % 24;
+  const mins = roundedMinutes % 60;
+  const ampm = h24 >= 12 ? 'PM' : 'AM';
+  const h12 = h24 % 12 || 12;
+  return `${h12}:${String(mins).padStart(2, '0')} ${ampm}`;
+}
+
+function buildMinuteTicks(stepMinutes = 30, labelEveryMinutes = 60) {
+  const vals = [];
+  const text = [];
+  for (let mins = 0; mins < 24 * 60; mins += stepMinutes) {
+    vals.push(mins);
+    text.push(mins % labelEveryMinutes === 0 ? formatHourLabel(mins / 60) : '');
+  }
+  return { vals, text };
+}
+
+function fmtNum(val, suffix = '', digits = 0) {
+  if (val == null || val === -9999) return '--';
+  return `${Number(val).toFixed(digits)}${suffix}`;
+}
+
+function fmtCloud(kapalilik) {
+  if (kapalilik == null || kapalilik === -9999) return '--';
+  if (kapalilik === 0) return 'CLR (0/8)';
+  if (kapalilik <= 2) return `FEW (${kapalilik}/8)`;
+  if (kapalilik <= 4) return `SCT (${kapalilik}/8)`;
+  if (kapalilik <= 7) return `BKN (${kapalilik}/8)`;
+  return `OVC (${kapalilik}/8)`;
+}
+
+function parseMetarSummary(metar) {
+  const text = metar || '';
+  const tempMatch = text.match(/\b(M?\d{2})\/(M?\d{2})\b/);
+  const windMatch = text.match(/\b(\d{3}|VRB)(\d{2,3})(G(\d{2,3}))?KT\b/);
+  const visMatch = text.match(/\b(9999|\d{4})\b/);
+  const qnhMatch = text.match(/\bQ(\d{4})\b/);
+  const skyMatches = text.match(/\b(FEW|SCT|BKN|OVC|VV)\d{3}\b/g) || [];
+
+  let temp = '--';
+  let dew = '--';
+  if (tempMatch) {
+    temp = tempMatch[1].startsWith('M') ? `-${parseInt(tempMatch[1].slice(1), 10)}°C` : `${parseInt(tempMatch[1], 10)}°C`;
+    dew = tempMatch[2].startsWith('M') ? `-${parseInt(tempMatch[2].slice(1), 10)}°C` : `${parseInt(tempMatch[2], 10)}°C`;
+  }
+
+  let wind = '--';
+  if (windMatch) {
+    wind = `${windMatch[1]} ${windMatch[2]}kt`;
+    if (windMatch[4]) wind += ` gust ${windMatch[4]}kt`;
+  }
+
+  let visibility = '--';
+  if (visMatch) {
+    visibility = visMatch[1] === '9999' ? '10km+' : `${visMatch[1]}m`;
+  }
+
+  return {
+    temp,
+    dew,
+    wind,
+    visibility,
+    pressure: qnhMatch ? `${qnhMatch[1]} hPa` : '--',
+    sky: skyMatches.length ? skyMatches.join(' ') : '--',
+  };
+}
+
+function renderObsGrid(targetId, rows) {
+  document.getElementById(targetId).innerHTML = rows
+    .map(([label, value]) => `<div class="obs-row"><strong>${label}:</strong> ${value}</div>`)
+    .join('');
+}
+
+function nextPublish(nowMinute, nowSecond, schedule) {
+  const nowTotal = nowMinute * 60 + nowSecond;
+  for (const m of schedule) {
+    const target = m * 60;
+    if (target > nowTotal) {
+      return [m, target - nowTotal];
+    }
+  }
+  return [schedule[0], (schedule[0] * 60 + 3600) - nowTotal];
+}
+
+function formatCountdown(totalSeconds) {
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  if (mins > 0) {
+    return `${mins}m ${String(secs).padStart(2, '0')}s`;
+  }
+  return `${secs}s`;
+}
+
+function updateScheduleCountdowns() {
+  const now = new Date();
+  const utcMinute = now.getUTCMinutes();
+  const utcSecond = now.getUTCSeconds();
+  const [nextMetarMinute, metarSecs] = nextPublish(
+    utcMinute, utcSecond, METAR_PUBLISH_MINUTES
+  );
+  const [nextAwsMinute, awsSecs] = nextPublish(
+    utcMinute, utcSecond, AWS_PUBLISH_MINUTES
+  );
+  document.getElementById('next-metar').textContent =
+    `Next METAR: :${String(nextMetarMinute).padStart(2, '0')} (${formatCountdown(metarSecs)})`;
+  document.getElementById('next-aws').textContent =
+    `Next AWS: :${String(nextAwsMinute).padStart(2, '0')} (${formatCountdown(awsSecs)})`;
+}
+
+// Chart data arrays
+let tempTimes = [], tempVals = [], forecastTimes = [], forecastVals = [];
+let forecastMaxTimes = [], forecastMaxVals = [], metarTimes = [], metarTemps = [];
+let windTimes = [], windSpeeds = [], windDirs = [];
+let cloudTimes = [], cloudVals = [];
+let humTimes = [], humVals = [], pressTimes = [], pressVals = [];
+let forecastRevisionTimes = [], forecastRevisionLtacMax = [], forecastRevisionAnkaraMax = [], forecastRevisionAnkaraPeakHour = [];
+let forecastBucketTraces = [];
+
+const MINUTE_TICKS = buildMinuteTicks(30, 60);
+const HOUR_TICK_VALS = [0, 3, 6, 9, 12, 15, 18, 21, 24];
+const HOUR_TICK_TEXT = HOUR_TICK_VALS.map((v) => formatHourLabel(v));
+const FORECAST_BUCKET_COLORS = ['#58a6ff', '#d2a8ff', '#3fb950', '#79c0ff', '#ffa657', '#f85149', '#a5d6ff', '#e3b3ff'];
+
+const chartLayout = {
+  paper_bgcolor: '#0d1117', plot_bgcolor: '#0d1117',
+  font: { color: '#c9d1d9', size: 11 },
+  margin: { l: 50, r: 50, t: 30, b: 42 },
+  xaxis: {
+    gridcolor: '#21262d',
+    type: 'linear',
+    range: [0, 24 * 60],
+    tickmode: 'array',
+    tickvals: MINUTE_TICKS.vals,
+    ticktext: MINUTE_TICKS.text,
+    tickangle: 0,
+    automargin: true,
+  },
+  yaxis: { gridcolor: '#21262d' },
+  height: 220,
+};
+
+function initCharts() {
+  Plotly.newPlot('temp-chart', [
+    { x: tempTimes, y: tempVals, name: 'AWS Temp', type: 'scatter', mode: 'lines', line: { color: '#58a6ff', width: 2 } },
+    { x: forecastTimes, y: forecastVals, name: 'Ankara Center 3h Forecast', type: 'scatter', mode: 'lines+markers', line: { color: '#ffa657', width: 2, dash: 'dash' }, marker: { size: 6 } },
+    { x: forecastMaxTimes, y: forecastMaxVals, name: 'LTAC Daily Forecast Max', type: 'scatter', mode: 'lines', line: { color: '#f85149', width: 1.5, dash: 'dot' } },
+    { x: metarTimes, y: metarTemps, name: 'METAR Temp', type: 'scatter', mode: 'markers', marker: { color: '#3fb950', size: 8, symbol: 'diamond' } },
+  ], {
+    ...chartLayout,
+    title: { text: 'Temperature (°C)', font: { size: 13, color: '#8b949e' } },
+    height: 320,
+    xaxis: {
+      ...chartLayout.xaxis,
+    },
+    yaxis: {
+      ...chartLayout.yaxis,
+      title: '°C',
+      dtick: 1,
+      automargin: true,
+    },
+  }, { responsive: true });
+
+  Plotly.newPlot('forecast-revision-chart', [
+    { x: forecastRevisionTimes, y: forecastRevisionLtacMax, name: 'LTAC Daily Max', type: 'scatter', mode: 'lines+markers', line: { color: '#f85149', width: 2 }, marker: { size: 6 } },
+    { x: forecastRevisionTimes, y: forecastRevisionAnkaraMax, name: 'Ankara Center Peak Temp', type: 'scatter', mode: 'lines+markers', line: { color: '#ffa657', width: 2, dash: 'dash' }, marker: { size: 6 } },
+    { x: forecastRevisionTimes, y: forecastRevisionAnkaraPeakHour, name: 'Ankara Peak Hour', type: 'scatter', mode: 'lines+markers', line: { color: '#3fb950', width: 2, dash: 'dot' }, marker: { size: 6 }, yaxis: 'y2' },
+  ], {
+    ...chartLayout,
+    title: { text: 'Forecast Revision History', font: { size: 13, color: '#8b949e' } },
+    yaxis: { ...chartLayout.yaxis, title: '°C', automargin: true },
+    yaxis2: {
+      gridcolor: '#21262d',
+      title: 'Peak Hour',
+      side: 'right',
+      overlaying: 'y',
+      range: [0, 24],
+      tickvals: HOUR_TICK_VALS,
+      ticktext: HOUR_TICK_TEXT,
+    },
+    height: 220,
+  }, { responsive: true });
+
+  Plotly.newPlot('forecast-bucket-chart', forecastBucketTraces, {
+    ...chartLayout,
+    title: { text: 'Ankara 3h Bucket Revisions', font: { size: 13, color: '#8b949e' } },
+    yaxis: { ...chartLayout.yaxis, title: '°C', automargin: true },
+    height: 240,
+    legend: { orientation: 'h' },
+  }, { responsive: true });
+
+  Plotly.newPlot('wind-chart', [
+    { x: windTimes, y: windSpeeds, name: 'Wind Speed', type: 'scatter', mode: 'lines', line: { color: '#d2a8ff', width: 2 } },
+  ], { ...chartLayout, title: { text: 'Wind Speed (km/h)', font: { size: 13, color: '#8b949e' } }, yaxis: { ...chartLayout.yaxis, title: 'km/h' }, height: 180 }, { responsive: true });
+
+  Plotly.newPlot('cloud-chart', [
+    { x: cloudTimes, y: cloudVals, name: 'Cloud Cover', type: 'scatter', mode: 'lines+markers', line: { color: '#8b949e', width: 2, shape: 'hv' }, marker: { color: '#c9d1d9', size: 6 } },
+  ], {
+    ...chartLayout,
+    title: { text: 'Cloud Cover (oktas / 8)', font: { size: 13, color: '#8b949e' } },
+    yaxis: {
+      ...chartLayout.yaxis,
+      title: 'okta',
+      dtick: 1,
+      range: [-0.2, 8.2],
+      automargin: true,
+    },
+    height: 180,
+  }, { responsive: true });
+
+  Plotly.newPlot('hum-press-chart', [
+    { x: humTimes, y: humVals, name: 'Humidity', type: 'scatter', mode: 'lines', line: { color: '#79c0ff', width: 2 }, yaxis: 'y' },
+    { x: pressTimes, y: pressVals, name: 'Pressure', type: 'scatter', mode: 'lines', line: { color: '#ffa657', width: 2 }, yaxis: 'y2' },
+  ], {
+    ...chartLayout,
+    title: { text: 'Humidity & Pressure', font: { size: 13, color: '#8b949e' } },
+    yaxis: { ...chartLayout.yaxis, title: 'Humidity %', side: 'left' },
+    yaxis2: { gridcolor: '#21262d', title: 'hPa', side: 'right', overlaying: 'y' },
+    height: 180,
+  }, { responsive: true });
+}
+
+function rebuildChartSeries() {
+  tempTimes = []; tempVals = [];
+  forecastTimes = []; forecastVals = [];
+  forecastMaxTimes = []; forecastMaxVals = [];
+  metarTimes = []; metarTemps = [];
+  windTimes = []; windSpeeds = []; windDirs = [];
+  cloudTimes = []; cloudVals = [];
+  humTimes = []; humVals = [];
+  pressTimes = []; pressVals = [];
+  forecastRevisionTimes = [];
+  forecastRevisionLtacMax = [];
+  forecastRevisionAnkaraMax = [];
+  forecastRevisionAnkaraPeakHour = [];
+  forecastBucketTraces = [];
+
+  for (const e of rawAwsHistory) {
+    if (localDayKeyFromIso(e.veri_zamani) !== currentAnkaraDayKey) continue;
+    const t = toChartMinute(e.veri_zamani);
+    if (e.sicaklik != null && e.sicaklik !== -9999) {
+      tempTimes.push(t); tempVals.push(e.sicaklik);
+    }
+    if (e.ruzgar_hiz != null && e.ruzgar_hiz !== -9999) {
+      windTimes.push(t); windSpeeds.push(e.ruzgar_hiz);
+    }
+    if (e.kapalilik != null && e.kapalilik !== -9999) {
+      cloudTimes.push(t); cloudVals.push(e.kapalilik);
+    }
+    if (e.nem != null && e.nem !== -9999) {
+      humTimes.push(t); humVals.push(e.nem);
+    }
+    const p = e.denize_indirgenmis_basinc;
+    if (p != null && p !== -9999) {
+      pressTimes.push(t); pressVals.push(p);
+    }
+  }
+
+  for (const e of rawMetarHistory) {
+    if (localDayKeyFromIso(e.detected_at) !== currentAnkaraDayKey) continue;
+    const t = toChartMinute(e.detected_at);
+    // Parse temp from METAR text (TT/DD pattern)
+    const m = (e.metar || '').match(/\b(M?\d{2})\/(M?\d{2})\b/);
+    if (m) {
+      let temp = m[1].startsWith('M') ? -parseInt(m[1].slice(1)) : parseInt(m[1]);
+      metarTimes.push(t);
+      metarTemps.push(temp);
+    }
+  }
+
+  for (const e of rawForecastHistory) {
+    if (localDayKeyFromIso(e.fetched_at) !== currentAnkaraDayKey) continue;
+    const t = toChartMinute(e.fetched_at);
+    forecastRevisionTimes.push(t);
+    forecastRevisionLtacMax.push(e.ltac_daily_max ?? null);
+    forecastRevisionAnkaraMax.push(e.ankara_peak_temp ?? null);
+    forecastRevisionAnkaraPeakHour.push(toHourDecimal(e.ankara_peak_time));
+  }
+
+  const bucketMap = new Map();
+  for (const snapshot of rawForecastHistory) {
+    if (localDayKeyFromIso(snapshot.fetched_at) !== currentAnkaraDayKey) continue;
+    const fetchedMinute = toChartMinute(snapshot.fetched_at);
+    for (const point of (snapshot.ankara_shape || [])) {
+      if (localDayKeyFromIso(point.tarih) !== currentAnkaraDayKey) continue;
+      const validMinute = toChartMinute(point.tarih);
+      if (validMinute == null || point.sicaklik == null) continue;
+      const key = String(validMinute);
+      if (!bucketMap.has(key)) {
+        bucketMap.set(key, {
+          name: formatHourLabel(validMinute / 60),
+          validMinute,
+          x: [],
+          y: [],
+        });
+      }
+      const series = bucketMap.get(key);
+      series.x.push(fetchedMinute);
+      series.y.push(point.sicaklik);
+    }
+  }
+
+  forecastBucketTraces = Array.from(bucketMap.values())
+    .sort((a, b) => a.validMinute - b.validMinute)
+    .map((series, idx) => ({
+      x: series.x,
+      y: series.y,
+      name: series.name,
+      type: 'scatter',
+      mode: 'lines+markers',
+      line: { color: FORECAST_BUCKET_COLORS[idx % FORECAST_BUCKET_COLORS.length], width: 2 },
+      marker: { size: 6 },
+    }));
+}
+
+function updateForecastSeries(snap) {
+  const tt = snap?.temp_tracker || {};
+
+  forecastTimes = [];
+  forecastVals = [];
+  for (const point of (tt.ankara_shape || [])) {
+    if (
+      point.tarih != null &&
+      point.sicaklik != null &&
+      localDayKeyFromIso(point.tarih) === currentAnkaraDayKey
+    ) {
+      forecastTimes.push(toChartMinute(point.tarih));
+      forecastVals.push(point.sicaklik);
+    }
+  }
+
+  forecastMaxTimes = [];
+  forecastMaxVals = [];
+  if (tt.forecast_daily_max != null) {
+    const allTimes = [...tempTimes, ...forecastTimes, ...metarTimes]
+      .filter(Boolean)
+      .sort((a, b) => a - b);
+    if (allTimes.length > 0) {
+      const minTime = allTimes[0];
+      const maxTime = allTimes[allTimes.length - 1];
+      forecastMaxTimes = [minTime, maxTime];
+      forecastMaxVals = [tt.forecast_daily_max, tt.forecast_daily_max];
+    }
+  }
+}
+
+function updateCharts() {
+  Plotly.update('temp-chart', { x: [tempTimes, forecastTimes, forecastMaxTimes, metarTimes], y: [tempVals, forecastVals, forecastMaxVals, metarTemps] });
+  Plotly.update('forecast-revision-chart', {
+    x: [forecastRevisionTimes, forecastRevisionTimes, forecastRevisionTimes],
+    y: [forecastRevisionLtacMax, forecastRevisionAnkaraMax, forecastRevisionAnkaraPeakHour],
+  });
+  Plotly.react('forecast-bucket-chart', forecastBucketTraces, {
+    ...chartLayout,
+    title: { text: 'Ankara 3h Bucket Revisions', font: { size: 13, color: '#8b949e' } },
+    yaxis: { ...chartLayout.yaxis, title: '°C', automargin: true },
+    height: 240,
+    legend: { orientation: 'h' },
+  }, { responsive: true });
+  Plotly.update('wind-chart', { x: [windTimes], y: [windSpeeds] });
+  Plotly.update('cloud-chart', { x: [cloudTimes], y: [cloudVals] });
+  Plotly.update('hum-press-chart', { x: [humTimes, pressTimes], y: [humVals, pressVals] });
+}
+
+function maybeAppendForecastSnapshot(forecastSnap) {
+  if (!forecastSnap || !forecastSnap.fetched_at) return;
+  const idx = rawForecastHistory.findIndex((e) => e.fetched_at === forecastSnap.fetched_at);
+  if (idx >= 0) {
+    rawForecastHistory[idx] = forecastSnap;
+  } else {
+    rawForecastHistory.push(forecastSnap);
+  }
+}
+
+function setError(message) {
+  const el = document.getElementById('error-bar');
+  if (message) {
+    el.textContent = `Fetch error: ${message}`;
+    el.classList.add('visible');
+  } else {
+    el.textContent = '';
+    el.classList.remove('visible');
+  }
+}
+
+function updateStatus(snap) {
+  if (!snap) return;
+  lastSnapshot = snap;
+  maybeAppendForecastSnapshot(snap.latest_forecast_snapshot);
+  rebuildChartSeries();
+  updateForecastSeries(snap);
+  const obs = snap.current_observation;
+  if (obs && obs.sicaklik != null) {
+    document.getElementById('current-temp').innerHTML = `<strong>${obs.sicaklik.toFixed(1)}°C</strong>`;
+  }
+  const tt = snap.temp_tracker;
+  if (tt) {
+    const el = document.getElementById('temp-state');
+    el.textContent = tt.state;
+    el.className = 'state-' + tt.state;
+    if (tt.observed_max_raw != null) {
+      document.getElementById('temp-max').textContent = `Max: ${tt.observed_max_raw.toFixed(1)}°C`;
+    }
+    if (tt.forecast_daily_max != null) {
+      document.getElementById('temp-forecast').textContent = `Forecast: ${tt.forecast_daily_max.toFixed(0)}°C`;
+    }
+  }
+  const ps = snap.poll_stats;
+  if (ps) {
+    const sched = snap.scheduler || {};
+    document.getElementById('poll-info').textContent =
+      `${(sched.interval || 0).toFixed(1)}s (${sched.interval_label || '?'}) | ` +
+      `${ps.last_poll_latency_ms.toFixed(0)}ms | ${ps.total_polls} polls | ${(ps.success_rate * 100).toFixed(1)}%`;
+  }
+  setError(snap.last_error || '');
+  if (snap.current_metar) {
+    document.getElementById('metar-box').textContent = snap.current_metar;
+  }
+
+  const metarSummary = parseMetarSummary(snap.current_metar || '');
+  document.getElementById('latest-metar-time').textContent =
+    `Detected: ${formatLocalTime(snap.current_metar_detected_at)}`;
+  renderObsGrid('latest-metar-grid', [
+    ['Temp', metarSummary.temp],
+    ['Dew', metarSummary.dew],
+    ['Wind', metarSummary.wind],
+    ['Vis', metarSummary.visibility],
+    ['Sky', metarSummary.sky],
+    ['QNH', metarSummary.pressure],
+  ]);
+
+  const aws = snap.current_observation || {};
+  document.getElementById('latest-aws-time').textContent =
+    `Observed: ${formatLocalTime(aws.veri_zamani)}`;
+  renderObsGrid('latest-aws-grid', [
+    ['Temp', fmtNum(aws.sicaklik, '°C', 1)],
+    ['Humidity', fmtNum(aws.nem, '%', 0)],
+    ['Wind', `${fmtNum(aws.ruzgar_hiz, ' km/h', 1)} @ ${fmtNum(aws.ruzgar_yon, '°', 0)}`],
+    ['Pressure', fmtNum(aws.denize_indirgenmis_basinc, ' hPa', 1)],
+    ['Vis', fmtNum(aws.gorus, 'm', 0)],
+    ['Cloud', fmtCloud(aws.kapalilik)],
+  ]);
+  updateCharts();
+}
+
+// Clock + schedule countdowns
+setInterval(() => {
+  const now = new Date(Date.now() + ISTANBUL_OFFSET);
+  const h = now.getUTCHours(), m = now.getUTCMinutes(), s = now.getUTCSeconds();
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  document.getElementById('clock').textContent =
+    `${h12}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')} ${ampm}`;
+  updateScheduleCountdowns();
+  const newDayKey = getCurrentAnkaraDayKey();
+  if (newDayKey !== currentAnkaraDayKey) {
+    currentAnkaraDayKey = newDayKey;
+    if (lastSnapshot) {
+      updateStatus(lastSnapshot);
+    }
+  }
+}, 1000);
+
+// WebSocket
+let ws;
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+  ws.onopen = () => {
+    document.getElementById('connection-status').textContent = 'CONNECTED';
+    document.getElementById('connection-status').className = 'connected';
+  };
+
+  ws.onclose = () => {
+    document.getElementById('connection-status').textContent = 'DISCONNECTED';
+    document.getElementById('connection-status').className = 'disconnected';
+    setTimeout(connect, 2000);
+  };
+
+  ws.onmessage = (evt) => {
+    const msg = JSON.parse(evt.data);
+
+    if (msg.type === 'init') {
+      // Load historical data
+      rawAwsHistory = msg.aws_history || [];
+      rawMetarHistory = msg.metar_history || [];
+      rawForecastHistory = msg.forecast_history || [];
+      updateStatus(msg.snapshot);
+    }
+    else if (msg.type === 'stats_tick') {
+      updateStatus(msg.snapshot);
+    }
+    else if (msg.type === 'aws_update') {
+      rawAwsHistory.push(msg.payload);
+    }
+    else if (msg.type === 'metar') {
+      const p = msg.payload;
+      document.getElementById('metar-box').textContent = p.metar_raw;
+      document.getElementById('metar-box').classList.add('new');
+      setTimeout(() => document.getElementById('metar-box').classList.remove('new'), 5000);
+      rawMetarHistory.push({
+        metar: p.metar_raw,
+        detected_at: p.detected_at,
+      });
+    }
+    else if (msg.type === 'error') {
+      setError(msg.payload.error || 'unknown');
+    }
+  };
+}
+
+initCharts();
+updateScheduleCountdowns();
+connect();
+</script>
+</body>
+</html>

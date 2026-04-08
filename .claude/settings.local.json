@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/pip install:*)",
+      "Bash(.venv/Scripts/pytest tests/ -v)",
+      "Bash(.venv/Scripts/python -c \"from metar_monitor.app import MetarMonitorApp; from metar_monitor.__main__ import parse_args; print\\('All imports OK'\\)\")",
+      "Bash(curl -s \"https://tgftp.nws.noaa.gov/data/observations/metar/stations/LTAC.TXT\")",
+      "Bash(curl -s \"https://aviationweather.gov/api/data/metar?ids=LTAC&format=raw\")",
+      "WebSearch",
+      "Bash(curl -sS -w '\\\\n  HTTP Status: %{http_code}\\\\n' -m 10 -A 'Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/124.0.0.0 Safari/537.36' 'https://www.liveatc.net/flash2/playlist.php?mount=__TRACKED_VAR__')",
+      "Bash(curl -sS -m 5 \"http://d.liveatc.net/ltac\")",
+      "Bash(curl -sS -o /dev/null -w \"HTTP Status: %{http_code}\\\\nContent-Type: %{content_type}\\\\nSize: %{size_download} bytes\\\\n\" -m 10 -H \"Icy-MetaData: 1\" -A \"Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\)\" \"http://d.liveatc.net/ltac\")",
+      "Bash(curl -sS -m 10 -A \"Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/124.0.0.0 Safari/537.36\" \"https://www.liveatc.net/hlisten.php?mount=ltac\")",
+      "Bash(curl -sS -o /dev/null -w \"HTTP Status: %{http_code}\\\\nContent-Type: %{content_type}\\\\nSize: %{size_download} bytes\\\\n\" -m 5 \"http://d.liveatc.net/kjfk_twr\")",
+      "Bash(curl -sS -o /dev/null -w '  HTTP: %{http_code} | Type: %{content_type} | Size: %{size_download}B\\\\n' -m 5 http://d.liveatc.net/__TRACKED_VAR__)",
+      "Bash(curl:*)",
+      "Bash(.venv/Scripts/pytest tests/ -q)",
+      "Bash(.venv/Scripts/python -c \"from metar_monitor.web.server import create_app; from metar_monitor.runtime import Runtime; print\\('Web imports OK'\\)\")"
+    ]
+  }
+}
