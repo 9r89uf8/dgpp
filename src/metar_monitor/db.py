@@ -391,7 +391,7 @@ class Database:
         if since is not None:
             sql += " AND veri_zamani >= ?"
             params.append(_as_iso(since))
-        sql += " ORDER BY veri_zamani ASC"
+        sql += " ORDER BY veri_zamani ASC, detected_at ASC"
         if limit is not None:
             sql += " LIMIT ?"
             params.append(limit)
@@ -514,7 +514,7 @@ class Database:
         tz = ZoneInfo(timezone_name)
         day = local_day or datetime.now(tz).date()
         entries = self.get_surface_history(airport_icao)
-        filtered: list[dict] = []
+        filtered_by_veri: dict[str, dict] = {}
         for entry in entries:
             veri = entry.get("veri_zamani")
             if not veri:
@@ -526,5 +526,8 @@ class Database:
             except ValueError:
                 continue
             if dt.astimezone(tz).date() == day:
-                filtered.append(entry)
-        return filtered
+                filtered_by_veri[str(veri)] = entry
+        return sorted(
+            filtered_by_veri.values(),
+            key=lambda row: str(row.get("veri_zamani", "")),
+        )

@@ -607,6 +607,16 @@ function applyImmediateTempEvent(payload) {
     observed_max_raw: payload.observed_max_raw ?? lastSnapshot.temp_tracker.observed_max_raw,
     observed_max_time: payload.observed_max_time ?? lastSnapshot.temp_tracker.observed_max_time,
     trend_10m: payload.trend_10m ?? lastSnapshot.temp_tracker.trend_10m,
+    trend_30m: payload.trend_30m ?? lastSnapshot.temp_tracker.trend_30m,
+    trend_60m: payload.trend_60m ?? lastSnapshot.temp_tracker.trend_60m,
+    remaining_gain_c: payload.remaining_gain_c ?? lastSnapshot.temp_tracker.remaining_gain_c,
+    final_max_estimate_c: payload.final_max_estimate_c ?? lastSnapshot.temp_tracker.final_max_estimate_c,
+    p_reached_max: payload.p_reached_max ?? lastSnapshot.temp_tracker.p_reached_max,
+    p_going_down: payload.p_going_down ?? lastSnapshot.temp_tracker.p_going_down,
+    p_above_forecast: payload.p_above_forecast ?? lastSnapshot.temp_tracker.p_above_forecast,
+    p_below_forecast: payload.p_below_forecast ?? lastSnapshot.temp_tracker.p_below_forecast,
+    down_state: payload.down_state ?? lastSnapshot.temp_tracker.down_state,
+    forecast_state: payload.forecast_state ?? lastSnapshot.temp_tracker.forecast_state,
     current_temp: payload.current_temp_raw ?? lastSnapshot.temp_tracker.current_temp,
   };
 

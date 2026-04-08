@@ -55,6 +55,43 @@ def _parse_iso(value: str | None) -> datetime | None:
     return dt
 
 
+def _coerce_float(value: object, default: float = -9999) -> float:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_int(value: object, default: int = -9999) -> int:
+    try:
+        if value is None:
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _surface_entry_to_observation(entry: dict) -> Observation:
+    return Observation(
+        ist_no=0,
+        veri_zamani=str(entry.get("veri_zamani", "")),
+        sicaklik=_coerce_float(entry.get("sicaklik")),
+        hissedilen_sicaklik=_coerce_float(entry.get("hissedilen_sicaklik")),
+        nem=_coerce_int(entry.get("nem")),
+        ruzgar_hiz=_coerce_float(entry.get("ruzgar_hiz")),
+        ruzgar_yon=_coerce_int(entry.get("ruzgar_yon")),
+        aktuel_basinc=_coerce_float(entry.get("aktuel_basinc")),
+        denize_indirgenmis_basinc=_coerce_float(entry.get("denize_indirgenmis_basinc")),
+        gorus=_coerce_int(entry.get("gorus")),
+        kapalilik=_coerce_int(entry.get("kapalilik")),
+        hadise_kodu=str(entry.get("hadise_kodu") or ""),
+        rasat_metar=str(entry.get("rasat_metar") or "-9999"),
+        yagis_24_saat=_coerce_float(entry.get("yagis_24_saat")),
+    )
+
+
 def _filter_rows(
     rows: list[dict],
     *,
@@ -111,6 +148,7 @@ class Runtime:
         )
         # Single source of truth for temperature state: the monitor-owned tracker.
         self.temp_tracker = self.monitor.temp_tracker
+        self._seed_temp_forecast_from_db()
 
         # Mutable snapshot fields
         self.current_observation: Observation | None = None
@@ -156,26 +194,50 @@ class Runtime:
 
         now_istanbul = datetime.now(ISTANBUL).date()
 
-        entries = []
+        entries: list[tuple[datetime, datetime | None, Observation]] = []
         for entry in source_entries:
-            veri = entry.get("veri_zamani", "")
-            sicaklik = entry.get("sicaklik", -9999)
-            if sicaklik == -9999 or not veri:
+            observation = _surface_entry_to_observation(entry)
+            if observation.sicaklik == -9999 or not observation.veri_zamani:
                 continue
             try:
-                dt = datetime.fromisoformat(veri.replace("Z", "+00:00"))
+                dt = datetime.fromisoformat(observation.veri_zamani.replace("Z", "+00:00"))
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=UTC)
                 local_date = dt.astimezone(ISTANBUL).date()
                 if local_date == now_istanbul:
-                    entries.append((dt, veri, sicaklik))
+                    entries.append((dt, _parse_iso(entry.get("detected_at")), observation))
             except (ValueError, TypeError):
                 continue
 
         entries.sort(key=lambda x: x[0])
 
-        for dt, veri, sicaklik in entries:
-            self.temp_tracker.record(veri, sicaklik, now_utc=dt)
+        for dt, detected_at, observation in entries:
+            self.temp_tracker.record_observation(
+                observation,
+                detected_at=detected_at or dt,
+            )
+
+    def _seed_temp_forecast_from_db(self) -> None:
+        if not self.db:
+            return
+        snapshot = self.db.get_latest_forecast_snapshot(AIRPORT_ICAO)
+        if not snapshot:
+            return
+        daily_max = snapshot.get("ltac_daily_max")
+        if daily_max is not None:
+            self.temp_tracker.update_forecast(float(daily_max))
+        shape_rows = snapshot.get("ankara_shape") or []
+        shape: list[tuple[datetime, float]] = []
+        for row in shape_rows:
+            try:
+                point_dt = datetime.fromisoformat(str(row.get("tarih", "")).replace("Z", "+00:00"))
+                if point_dt.tzinfo is None:
+                    point_dt = point_dt.replace(tzinfo=UTC)
+                shape.append((point_dt, float(row.get("sicaklik"))))
+            except (TypeError, ValueError):
+                continue
+        if shape:
+            self.temp_tracker.update_ankara_shape(shape)
 
     def metar_history(
         self,
@@ -365,8 +427,20 @@ class Runtime:
                 ],
                 "forecast_gap": tracker.forecast_gap,
                 "trend_10m": tracker.trend_10m,
+                "trend_30m": tracker.trend_30m,
+                "trend_60m": tracker.trend_60m,
                 "minutes_since_max": tracker.minutes_since_max,
                 "drop_from_max": tracker.drop_from_max,
+                "noise_30m": tracker.noise_30m,
+                "shape_delta_remaining": tracker.shape_delta_remaining,
+                "remaining_gain_c": tracker.nowcast.remaining_gain_c,
+                "final_max_estimate_c": tracker.nowcast.final_max_estimate_c,
+                "p_reached_max": tracker.nowcast.p_reached_max,
+                "p_going_down": tracker.nowcast.p_going_down,
+                "p_above_forecast": tracker.nowcast.p_above_forecast,
+                "p_below_forecast": tracker.nowcast.p_below_forecast,
+                "down_state": tracker.nowcast.down_state.value,
+                "forecast_state": tracker.nowcast.forecast_state.value,
                 "current_temp": tracker.samples[-1].temp_c_raw if tracker.samples else None,
             },
             "latest_forecast_snapshot": self.latest_forecast_snapshot(),

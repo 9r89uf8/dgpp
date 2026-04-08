@@ -339,7 +339,6 @@ class TempPanel(Static):
         current = tracker.samples[-1].temp_c_raw
         state_label = _STATE_LABELS.get(tracker.state, str(tracker.state))
 
-        # Trend arrow
         trend = tracker.trend_10m
         if trend is not None:
             if trend > 0.1:
@@ -351,7 +350,6 @@ class TempPanel(Static):
         else:
             arrow = "→ N/A"
 
-        # Max info
         max_str = "N/A"
         if tracker.observed_max_raw is not None:
             max_time = ""
@@ -359,7 +357,6 @@ class TempPanel(Static):
                 max_time = _to_local(tracker.observed_max_raw_time).strftime("%I:%M %p")
             max_str = f"{tracker.observed_max_raw:.1f}°C at {max_time}"
 
-        # Forecast
         fcast_str = "N/A"
         if tracker.forecast_daily_max is not None:
             fcast_str = f"{tracker.forecast_daily_max:.0f}°C"
@@ -367,12 +364,27 @@ class TempPanel(Static):
             if gap is not None:
                 fcast_str += f" (gap: {gap:+.1f}°C)"
 
-        # Minutes since max
         mins = tracker.minutes_since_max
         mins_str = f"{mins:.0f}m ago" if mins is not None and mins > 0 else "now"
+        remaining_gain = tracker.nowcast.remaining_gain_c
+        final_max = tracker.nowcast.final_max_estimate_c
+        down_state = tracker.nowcast.down_state.value.replace("_", " ")
+        forecast_state = tracker.nowcast.forecast_state.value.replace("_", " ")
+        remaining_str = (
+            f"{remaining_gain:.1f}°C -> final {final_max:.1f}°C"
+            if remaining_gain is not None and final_max is not None
+            else "N/A"
+        )
+        down_str = "N/A"
+        if tracker.nowcast.p_going_down is not None:
+            down_str = f"{down_state} ({tracker.nowcast.p_going_down:.0%})"
+        vs_forecast_str = forecast_state
+        if tracker.nowcast.p_reached_max is not None:
+            vs_forecast_str += f"  peak {tracker.nowcast.p_reached_max:.0%}"
 
         lines = [
             f"  Current: [bold]{current:.1f}°C[/]  {arrow}  State: {state_label}",
             f"  Observed max: {max_str} ({mins_str})  Forecast max: {fcast_str}",
+            f"  Remaining gain: {remaining_str}  Down now: {down_str}  Vs forecast: {vs_forecast_str}",
         ]
         self.temp_text = "\n".join(lines)

@@ -147,6 +147,8 @@ class Monitor:
             event = self.temp_tracker.update_forecast(daily_max, now_utc=fetched_at)
             if self.on_temp_event:
                 self.on_temp_event(event)
+            if self.hub:
+                self.hub.publish_temp(event)
         except Exception as e:
             log.warning("Daily forecast fetch failed: %s", e)
 
@@ -262,15 +264,18 @@ class Monitor:
             self.stats.record_new_metar()
             self.scheduler.notify_detection()
             self._persist_event(event)
-        elif event.event_type == EventType.AWS_UPDATE and event.observation:
-            self._persist_aws_update(event)
 
-        # Feed temperature tracker on every successful poll with valid data
+        # Canonical LTAC surface stream: one write + one tracker update per veriZamani.
+        if event.observation:
+            obs = event.observation
+            if self._should_persist_surface_observation(obs):
+                self._persist_surface_observation(obs, event.detected_at)
+
         if event.observation and event.observation.sicaklik != -9999:
             obs = event.observation
             if self.temp_tracker.is_unique(obs.veri_zamani, obs.sicaklik):
-                temp_events = self.temp_tracker.record(
-                    obs.veri_zamani, obs.sicaklik
+                temp_events = self.temp_tracker.record_observation(
+                    obs, detected_at=event.detected_at
                 )
                 for te in temp_events:
                     if te.event_type in (
@@ -327,10 +332,16 @@ class Monitor:
             if capture:
                 self.state.record_capture(capture)
 
-    def _persist_aws_update(self, event: MetarEvent) -> None:
-        """Persist AWS observation update to disk."""
-        obs = event.observation
-        if not obs:
+    def _should_persist_surface_observation(self, obs: Observation) -> bool:
+        return bool(obs.veri_zamani) and obs.veri_zamani != self.state.last_seen_veri_zamani
+
+    def _persist_surface_observation(
+        self,
+        obs: Observation,
+        detected_at: datetime,
+    ) -> None:
+        """Persist one canonical LTAC surface observation keyed by veriZamani."""
+        if not obs.veri_zamani:
             return
         self.state.last_seen_veri_zamani = obs.veri_zamani
         if self.db:
@@ -339,7 +350,7 @@ class Monitor:
                 source_provider="mgm",
                 source_external_id=str(MGM_OBS_ISTNO),
                 veri_zamani=obs.veri_zamani,
-                detected_at=event.detected_at,
+                detected_at=detected_at,
                 sicaklik=obs.sicaklik,
                 hissedilen_sicaklik=obs.hissedilen_sicaklik,
                 nem=obs.nem,
@@ -355,7 +366,7 @@ class Monitor:
         else:
             self.state.record_aws_update(
                 veri_zamani=obs.veri_zamani,
-                detected_at_iso=event.detected_at.isoformat(),
+                detected_at_iso=detected_at.isoformat(),
                 sicaklik=obs.sicaklik,
                 nem=obs.nem,
                 ruzgar_hiz=obs.ruzgar_hiz,

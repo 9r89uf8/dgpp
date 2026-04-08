@@ -156,3 +156,32 @@ class TestDatabase:
         )
         assert len(rows) == 1
         assert rows[0]["sicaklik"] == 13.0
+
+    def test_get_surface_observations_for_local_day_collapses_duplicate_veri_zamani(self, tmp_path):
+        db = self._make_db(tmp_path)
+
+        db.record_surface_observation(
+            airport_icao="LTAC",
+            source_provider="mgm",
+            source_external_id="17128",
+            veri_zamani="2026-04-08T07:30:00.000Z",
+            detected_at="2026-04-08T07:30:10+00:00",
+            sicaklik=13.0,
+        )
+        db.record_surface_observation(
+            airport_icao="LTAC",
+            source_provider="mgm",
+            source_external_id="17128",
+            veri_zamani="2026-04-08T07:30:00.000Z",
+            detected_at="2026-04-08T07:30:20+00:00",
+            sicaklik=13.2,
+        )
+
+        rows = db.get_surface_observations_for_local_day(
+            "LTAC",
+            "Europe/Istanbul",
+            local_day=date(2026, 4, 8),
+        )
+
+        assert len(rows) == 1
+        assert rows[0]["sicaklik"] == 13.2
