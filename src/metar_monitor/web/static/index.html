@@ -60,7 +60,10 @@
     overflow-y: hidden;
     padding-bottom: 4px;
   }
-  #temp-chart {
+  #temp-chart,
+  #neighbor-chart,
+  #regional-forecast-chart,
+  #forecast-revision-chart {
     min-width: 1800px;
   }
   .chart-note {
@@ -206,13 +209,13 @@
 <div class="chart-container chart-scroll"><div id="temp-chart"></div></div>
 <div class="chart-note">Charts use the selected Istanbul local day. The top status bar and observation cards remain live.</div>
 <div class="chart-note">Dashed orange line is Ankara center 3-hour forecast guidance. Passed buckets stay on the chart at their last-seen forecast value so you can compare them with the observed temperatures. Red dotted line is the LTAC airport daily forecast max.</div>
-<div class="chart-container"><div id="neighbor-chart"></div></div>
+<div class="chart-container chart-scroll"><div id="neighbor-chart"></div></div>
 <div class="chart-note">Neighbor ring uses the 5-minute Ankara province AWS bulk fetch for Esenboga, Akyurt, Pursaklar, Cubuk, and Ankara center. These are comparison lines, not bias-corrected temperatures.</div>
-<div class="chart-container"><div id="regional-forecast-chart"></div></div>
+<div class="chart-container chart-scroll"><div id="regional-forecast-chart"></div></div>
 <div class="chart-note">Regional daily forecast context shows LTAC airport daily max against Ankara, Akyurt, Pursaklar, and Cubuk district daily max forecasts. These are context lines, not replacements for the LTAC airport forecast.</div>
 <div class="map-panel"><div id="spatial-map"></div></div>
 <div class="chart-note">Spatial context is centered on Esenboga using official MGM coordinates for the selected stations. LTAC updates live; the surrounding stations refresh on the 5-minute province-context fetch.</div>
-<div class="chart-container"><div id="forecast-revision-chart"></div></div>
+<div class="chart-container chart-scroll"><div id="forecast-revision-chart"></div></div>
 <div class="chart-note">Forecast revision history: red shows LTAC airport daily max, orange shows Ankara center 3-hour forecast peak temperature, and green shows the Ankara center forecast peak hour.</div>
 <div class="chart-container"><div id="forecast-bucket-chart"></div></div>
 <div class="chart-note">Ankara 3-hour bucket revisions: x-axis is when we fetched the forecast, each line is a future valid bucket like 3:00 PM or 6:00 PM. When a bucket disappears after its valid time passes, its line stops.</div>
@@ -526,14 +529,14 @@ function initCharts() {
       tickvals: HOUR_TICK_VALS,
       ticktext: HOUR_TICK_TEXT,
     },
-    height: 220,
+    height: 300,
   }, { responsive: true });
 
   Plotly.newPlot('neighbor-chart', neighborRingTraces, {
     ...chartLayout,
     title: { text: 'Airport Ring Temperatures', font: { size: 13, color: '#8b949e' } },
     yaxis: { ...chartLayout.yaxis, title: '°C', automargin: true },
-    height: 240,
+    height: 320,
     legend: { orientation: 'h' },
   }, { responsive: true });
 
@@ -541,7 +544,7 @@ function initCharts() {
     ...chartLayout,
     title: { text: 'Regional Daily Max Forecast Context', font: { size: 13, color: '#8b949e' } },
     yaxis: { ...chartLayout.yaxis, title: '°C', automargin: true },
-    height: 240,
+    height: 320,
     legend: { orientation: 'h' },
   }, { responsive: true });
 
@@ -843,22 +846,37 @@ function updateForecastSeries(snap) {
 
 function updateCharts() {
   Plotly.update('temp-chart', { x: [tempTimes, forecastTimes, forecastMaxTimes, metarTimes], y: [tempVals, forecastVals, forecastMaxVals, metarTemps] });
-  Plotly.update('forecast-revision-chart', {
-    x: [forecastRevisionTimes, forecastRevisionTimes, forecastRevisionTimes],
-    y: [forecastRevisionLtacMax, forecastRevisionAnkaraMax, forecastRevisionAnkaraPeakHour],
-  });
+  Plotly.react('forecast-revision-chart', [
+    { x: forecastRevisionTimes, y: forecastRevisionLtacMax, name: 'LTAC Daily Max', type: 'scatter', mode: 'lines+markers', line: { color: '#f85149', width: 2 }, marker: { size: 6 } },
+    { x: forecastRevisionTimes, y: forecastRevisionAnkaraMax, name: 'Ankara Center Peak Temp', type: 'scatter', mode: 'lines+markers', line: { color: '#ffa657', width: 2, dash: 'dash' }, marker: { size: 6 } },
+    { x: forecastRevisionTimes, y: forecastRevisionAnkaraPeakHour, name: 'Ankara Peak Hour', type: 'scatter', mode: 'lines+markers', line: { color: '#3fb950', width: 2, dash: 'dot' }, marker: { size: 6 }, yaxis: 'y2' },
+  ], {
+    ...chartLayout,
+    title: { text: 'Forecast Revision History', font: { size: 13, color: '#8b949e' } },
+    yaxis: { ...chartLayout.yaxis, title: '°C', automargin: true },
+    yaxis2: {
+      gridcolor: '#21262d',
+      title: 'Peak Hour',
+      side: 'right',
+      overlaying: 'y',
+      range: [0, 24],
+      tickvals: HOUR_TICK_VALS,
+      ticktext: HOUR_TICK_TEXT,
+    },
+    height: 300,
+  }, { responsive: true });
   Plotly.react('neighbor-chart', neighborRingTraces, {
     ...chartLayout,
     title: { text: 'Airport Ring Temperatures', font: { size: 13, color: '#8b949e' } },
     yaxis: { ...chartLayout.yaxis, title: '°C', automargin: true },
-    height: 240,
+    height: 320,
     legend: { orientation: 'h' },
   }, { responsive: true });
   Plotly.react('regional-forecast-chart', regionalForecastTraces, {
     ...chartLayout,
     title: { text: 'Regional Daily Max Forecast Context', font: { size: 13, color: '#8b949e' } },
     yaxis: { ...chartLayout.yaxis, title: '°C', automargin: true },
-    height: 240,
+    height: 320,
     legend: { orientation: 'h' },
   }, { responsive: true });
   Plotly.react('forecast-bucket-chart', forecastBucketTraces, {
