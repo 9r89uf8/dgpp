@@ -208,7 +208,7 @@
 
 <div class="chart-container chart-scroll"><div id="temp-chart"></div></div>
 <div class="chart-note">Charts use the selected Istanbul local day. The top status bar and observation cards remain live.</div>
-<div class="chart-note">Dashed orange line is Ankara center 3-hour forecast guidance. Passed buckets stay on the chart at their last-seen forecast value so you can compare them with the observed temperatures. Red dotted line is the LTAC airport daily forecast max.</div>
+<div class="chart-note">Dashed orange line is the Ankara daily max forecast context for the selected day. Red dotted line is the LTAC airport daily forecast max. The Ankara 3-hour shape remains in the revision and bucket charts below.</div>
 <div class="chart-container chart-scroll"><div id="neighbor-chart"></div></div>
 <div class="chart-note">Neighbor ring uses the 5-minute Ankara province AWS bulk fetch for Esenboga, Akyurt, Pursaklar, Cubuk, and Ankara center. These are comparison lines, not bias-corrected temperatures.</div>
 <div class="chart-container chart-scroll"><div id="regional-forecast-chart"></div></div>
@@ -494,7 +494,7 @@ const chartLayout = {
 function initCharts() {
   Plotly.newPlot('temp-chart', [
     { x: tempTimes, y: tempVals, name: 'AWS Temp', type: 'scatter', mode: 'lines', line: { color: '#58a6ff', width: 2 } },
-    { x: forecastTimes, y: forecastVals, name: 'Ankara Center 3h Forecast', type: 'scatter', mode: 'lines+markers', line: { color: '#ffa657', width: 2, dash: 'dash' }, marker: { size: 6 } },
+    { x: forecastTimes, y: forecastVals, name: 'Ankara Daily Forecast Max', type: 'scatter', mode: 'lines', line: { color: '#ffa657', width: 2, dash: 'dash' } },
     { x: forecastMaxTimes, y: forecastMaxVals, name: 'LTAC Daily Forecast Max', type: 'scatter', mode: 'lines', line: { color: '#f85149', width: 1.5, dash: 'dot' } },
     { x: metarTimes, y: metarTemps, name: 'METAR Temp', type: 'scatter', mode: 'markers', marker: { color: '#3fb950', size: 8, symbol: 'diamond' } },
   ], {
@@ -778,69 +778,33 @@ function updateForecastSeries(snap) {
   forecastVals = [];
   const tt = snap?.temp_tracker || {};
 
-  const retainedForecastPoints = [];
-  const retainedByValidTime = new Map();
   const sortedSnapshots = [...rawForecastHistory]
     .filter((snapshot) => localDayKeyFromIso(snapshot.fetched_at) === selectedAnkaraDayKey)
     .sort((a, b) => String(a.fetched_at).localeCompare(String(b.fetched_at)));
   const selectedLatestForecast = sortedSnapshots.length
     ? sortedSnapshots[sortedSnapshots.length - 1]
     : null;
-
-  for (const snapshot of sortedSnapshots) {
-    for (const point of (snapshot.ankara_shape || [])) {
-      if (
-        point.tarih == null ||
-        point.sicaklik == null ||
-        localDayKeyFromIso(point.tarih) !== selectedAnkaraDayKey
-      ) {
-        continue;
-      }
-      retainedByValidTime.set(String(point.tarih), {
-        minute: toChartMinute(point.tarih),
-        temp: point.sicaklik,
-      });
-    }
-  }
-
-  for (const point of retainedByValidTime.values()) {
-    if (point.minute != null) {
-      retainedForecastPoints.push(point);
-    }
-  }
-  retainedForecastPoints.sort((a, b) => a.minute - b.minute);
-
-  if (retainedForecastPoints.length > 0) {
-    for (const point of retainedForecastPoints) {
-      forecastTimes.push(point.minute);
-      forecastVals.push(point.temp);
-    }
-  } else {
-    for (const point of (selectedLatestForecast?.ankara_shape || tt.ankara_shape || [])) {
-      if (
-        point.tarih != null &&
-        point.sicaklik != null &&
-        localDayKeyFromIso(point.tarih) === selectedAnkaraDayKey
-      ) {
-        forecastTimes.push(toChartMinute(point.tarih));
-        forecastVals.push(point.sicaklik);
-      }
-    }
-  }
+  const ankaraDailyForecast = (selectedLatestForecast?.regional_daily_context || [])
+    .find((point) => String(point.label || '').toUpperCase() === 'ANKARA')
+    ?.forecast_daily_max;
 
   forecastMaxTimes = [];
   forecastMaxVals = [];
   const forecastDailyMax = selectedLatestForecast?.ltac_daily_max ?? tt.forecast_daily_max;
+  const allTimes = [...tempTimes, ...metarTimes]
+    .filter((val) => val != null)
+    .sort((a, b) => a - b);
+  const minTime = allTimes.length > 0 ? allTimes[0] : 0;
+  const maxTime = allTimes.length > 0 ? allTimes[allTimes.length - 1] : 24 * 60;
+
+  if (ankaraDailyForecast != null) {
+    forecastTimes = [minTime, maxTime];
+    forecastVals = [ankaraDailyForecast, ankaraDailyForecast];
+  }
+
   if (forecastDailyMax != null) {
-    const allTimes = [...tempTimes, ...forecastTimes, ...metarTimes]
-      .filter(Boolean)
-      .sort((a, b) => a - b);
-    if (allTimes.length > 0) {
-      const minTime = allTimes[0];
-      const maxTime = allTimes[allTimes.length - 1];
-      forecastMaxTimes = [minTime, maxTime];
-      forecastMaxVals = [forecastDailyMax, forecastDailyMax];
-    }
+    forecastMaxTimes = [minTime, maxTime];
+    forecastMaxVals = [forecastDailyMax, forecastDailyMax];
   }
 }
 
