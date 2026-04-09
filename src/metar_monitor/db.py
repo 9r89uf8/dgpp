@@ -349,6 +349,7 @@ class Database:
         self,
         airport_icao: str,
         since: datetime | str | None = None,
+        until: datetime | str | None = None,
         limit: int | None = None,
         event_types: tuple[str, ...] | None = None,
     ) -> list[dict]:
@@ -365,6 +366,9 @@ class Database:
         if since is not None:
             sql += " AND detected_at >= ?"
             params.append(_as_iso(since))
+        if until is not None:
+            sql += " AND detected_at < ?"
+            params.append(_as_iso(until))
         sql += " ORDER BY detected_at ASC"
         if limit is not None:
             sql += " LIMIT ?"
@@ -377,6 +381,7 @@ class Database:
         self,
         airport_icao: str,
         since: datetime | str | None = None,
+        until: datetime | str | None = None,
         limit: int | None = None,
     ) -> list[dict]:
         sql = """
@@ -391,6 +396,9 @@ class Database:
         if since is not None:
             sql += " AND veri_zamani >= ?"
             params.append(_as_iso(since))
+        if until is not None:
+            sql += " AND veri_zamani < ?"
+            params.append(_as_iso(until))
         sql += " ORDER BY veri_zamani ASC, detected_at ASC"
         if limit is not None:
             sql += " LIMIT ?"
@@ -403,6 +411,7 @@ class Database:
         self,
         airport_icao: str,
         since: datetime | str | None = None,
+        until: datetime | str | None = None,
         limit: int | None = None,
         forecast_kind: str | None = None,
     ) -> list[dict]:
@@ -419,6 +428,9 @@ class Database:
         if since is not None:
             sql += " AND fetched_at >= ?"
             params.append(_as_iso(since))
+        if until is not None:
+            sql += " AND fetched_at < ?"
+            params.append(_as_iso(until))
         sql += " ORDER BY fetched_at ASC"
         if limit is not None:
             sql += " LIMIT ?"
@@ -445,12 +457,14 @@ class Database:
         self,
         airport_icao: str,
         since: datetime | str | None = None,
+        until: datetime | str | None = None,
         limit: int | None = None,
         forecast_kind: str = "combined",
     ) -> list[dict]:
         rows = self.get_forecast_history(
             airport_icao=airport_icao,
             since=since,
+            until=until,
             limit=limit,
             forecast_kind=forecast_kind,
         )

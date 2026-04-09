@@ -262,6 +262,73 @@ class TestTempReplay:
         assert rt.latest_forecast_snapshot()["neighbor_ring"][0]["label"] == "ESENBOGA"
         assert rt.latest_forecast_snapshot()["regional_daily_context"][0]["label"] == "ANKARA"
 
+    def test_runtime_history_filters_by_local_day_with_db(self, tmp_path):
+        state = MonitorState(state_dir=str(tmp_path / "state"))
+        state.load()
+        db = _make_db(tmp_path)
+
+        db.record_surface_observation(
+            airport_icao="LTAC",
+            source_provider="mgm",
+            source_external_id="17128",
+            veri_zamani="2026-04-08T07:30:00.000Z",
+            detected_at="2026-04-08T07:30:10+00:00",
+            sicaklik=13.0,
+        )
+        db.record_surface_observation(
+            airport_icao="LTAC",
+            source_provider="mgm",
+            source_external_id="17128",
+            veri_zamani="2026-04-09T07:30:00.000Z",
+            detected_at="2026-04-09T07:30:10+00:00",
+            sicaklik=17.0,
+        )
+        db.record_metar(
+            airport_icao="LTAC",
+            source_provider="mgm",
+            source_external_id="17128",
+            metar_raw="LTAC 081200Z 18005KT 9999 13/05 Q1018",
+            normalized_metar="LTAC 081200Z 18005KT 9999 13/05 Q1018",
+            ddhhmmz="081200Z",
+            event_type="new",
+            detected_at="2026-04-08T12:01:00+00:00",
+        )
+        db.record_metar(
+            airport_icao="LTAC",
+            source_provider="mgm",
+            source_external_id="17128",
+            metar_raw="LTAC 091200Z 18005KT 9999 17/05 Q1016",
+            normalized_metar="LTAC 091200Z 18005KT 9999 17/05 Q1016",
+            ddhhmmz="091200Z",
+            event_type="new",
+            detected_at="2026-04-09T12:01:00+00:00",
+        )
+        db.record_forecast_fetch(
+            airport_icao="LTAC",
+            source_provider="mgm",
+            source_external_id="90615+17130",
+            forecast_kind="combined",
+            fetched_at="2026-04-08T10:00:00+00:00",
+            raw_json={"fetched_at": "2026-04-08T10:00:00+00:00", "ltac_daily_max": 16},
+        )
+        db.record_forecast_fetch(
+            airport_icao="LTAC",
+            source_provider="mgm",
+            source_external_id="90615+17130",
+            forecast_kind="combined",
+            fetched_at="2026-04-09T10:00:00+00:00",
+            raw_json={"fetched_at": "2026-04-09T10:00:00+00:00", "ltac_daily_max": 20},
+        )
+
+        rt = Runtime(client=MGMClient(), state=state, db=db)
+
+        assert [row["sicaklik"] for row in rt.aws_history(local_day="2026-04-08")] == [13.0]
+        assert [row["sicaklik"] for row in rt.aws_history(local_day="2026-04-09")] == [17.0]
+        assert [row["ddhhmmz"] for row in rt.metar_history(local_day="2026-04-08")] == ["081200Z"]
+        assert [row["ddhhmmz"] for row in rt.metar_history(local_day="2026-04-09")] == ["091200Z"]
+        assert [row["ltac_daily_max"] for row in rt.forecast_history(local_day="2026-04-08")] == [16]
+        assert [row["ltac_daily_max"] for row in rt.forecast_history(local_day="2026-04-09")] == [20]
+
     def test_runtime_falls_back_to_json_history_when_db_is_empty(self, tmp_path):
         state = MonitorState(state_dir=str(tmp_path / "state"))
         state.history = [
@@ -299,6 +366,54 @@ class TestTempReplay:
         assert rt.metar_history()[-1]["ddhhmmz"] == "081200Z"
         assert rt.aws_history()[-1]["sicaklik"] == 13.0
         assert rt.latest_forecast_snapshot()["ltac_daily_max"] == 16
+
+    def test_runtime_history_filters_by_local_day_without_db(self, tmp_path):
+        state = MonitorState(state_dir=str(tmp_path / "state"))
+        state.history = [
+            {
+                "metar": "LTAC 081200Z 18005KT 9999 13/05 Q1018",
+                "ddhhmmz": "081200Z",
+                "detected_at": "2026-04-08T12:01:00+00:00",
+                "event_type": "new",
+            },
+            {
+                "metar": "LTAC 091200Z 18005KT 9999 17/05 Q1016",
+                "ddhhmmz": "091200Z",
+                "detected_at": "2026-04-09T12:01:00+00:00",
+                "event_type": "new",
+            },
+        ]
+        state.aws_history = [
+            {
+                "veri_zamani": "2026-04-08T07:30:00.000Z",
+                "detected_at": "2026-04-08T07:30:10+00:00",
+                "sicaklik": 13.0,
+            },
+            {
+                "veri_zamani": "2026-04-09T07:30:00.000Z",
+                "detected_at": "2026-04-09T07:30:10+00:00",
+                "sicaklik": 17.0,
+            },
+        ]
+        state.forecast_history = [
+            {
+                "fetched_at": "2026-04-08T10:00:00+00:00",
+                "ltac_daily_max": 16,
+            },
+            {
+                "fetched_at": "2026-04-09T10:00:00+00:00",
+                "ltac_daily_max": 20,
+            },
+        ]
+
+        rt = Runtime(client=MGMClient(), state=state)
+
+        assert [row["sicaklik"] for row in rt.aws_history(local_day="2026-04-08")] == [13.0]
+        assert [row["sicaklik"] for row in rt.aws_history(local_day="2026-04-09")] == [17.0]
+        assert [row["ddhhmmz"] for row in rt.metar_history(local_day="2026-04-08")] == ["081200Z"]
+        assert [row["ddhhmmz"] for row in rt.metar_history(local_day="2026-04-09")] == ["091200Z"]
+        assert [row["ltac_daily_max"] for row in rt.forecast_history(local_day="2026-04-08")] == [16]
+        assert [row["ltac_daily_max"] for row in rt.forecast_history(local_day="2026-04-09")] == [20]
 
     def test_clear_persisted_history_clears_db_state_and_tracker(self, tmp_path):
         state = MonitorState(state_dir=str(tmp_path / "state"))

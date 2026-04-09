@@ -70,6 +70,34 @@ class TestDatabase:
         assert len(history) == 1
         assert history[0]["metar_raw"].startswith("LTAC 081200Z")
 
+    def test_history_queries_support_until_bound(self, tmp_path):
+        db = self._make_db(tmp_path)
+
+        db.record_metar(
+            airport_icao="LTAC",
+            source_provider="mgm",
+            source_external_id="17128",
+            metar_raw="LTAC 081200Z 18005KT 9999 15/05 Q1018",
+            normalized_metar="LTAC 081200Z 18005KT 9999 15/05 Q1018",
+            ddhhmmz="081200Z",
+            event_type="new",
+            detected_at="2026-04-08T12:01:00+00:00",
+        )
+        db.record_metar(
+            airport_icao="LTAC",
+            source_provider="mgm",
+            source_external_id="17128",
+            metar_raw="LTAC 091200Z 18005KT 9999 17/05 Q1016",
+            normalized_metar="LTAC 091200Z 18005KT 9999 17/05 Q1016",
+            ddhhmmz="091200Z",
+            event_type="new",
+            detected_at="2026-04-09T12:01:00+00:00",
+        )
+
+        rows = db.get_metar_history("LTAC", until="2026-04-09T00:00:00+00:00")
+
+        assert [row["ddhhmmz"] for row in rows] == ["081200Z"]
+
     def test_surface_observation_dedup_uses_insert_or_ignore(self, tmp_path):
         db = self._make_db(tmp_path)
 

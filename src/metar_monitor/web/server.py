@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -13,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
+ISTANBUL = ZoneInfo("Europe/Istanbul")
 
 
 def create_app(runtime) -> FastAPI:
@@ -35,16 +38,28 @@ def create_app(runtime) -> FastAPI:
         return rt.snapshot()
 
     @app.get("/api/history/metar")
-    async def metar_history(since: str | None = None, limit: int | None = None):
-        return rt.metar_history(since=since, limit=limit)
+    async def metar_history(
+        since: str | None = None,
+        local_day: str | None = None,
+        limit: int | None = None,
+    ):
+        return rt.metar_history(since=since, local_day=local_day, limit=limit)
 
     @app.get("/api/history/aws")
-    async def aws_history(since: str | None = None, limit: int | None = None):
-        return rt.aws_history(since=since, limit=limit)
+    async def aws_history(
+        since: str | None = None,
+        local_day: str | None = None,
+        limit: int | None = None,
+    ):
+        return rt.aws_history(since=since, local_day=local_day, limit=limit)
 
     @app.get("/api/history/forecast")
-    async def forecast_history(since: str | None = None, limit: int | None = None):
-        return rt.forecast_history(since=since, limit=limit)
+    async def forecast_history(
+        since: str | None = None,
+        local_day: str | None = None,
+        limit: int | None = None,
+    ):
+        return rt.forecast_history(since=since, local_day=local_day, limit=limit)
 
     @app.post("/api/admin/clear-history")
     async def clear_history():
@@ -56,13 +71,15 @@ def create_app(runtime) -> FastAPI:
         sub = rt.hub.subscribe(maxsize=256)
 
         try:
+            current_day = datetime.now(ISTANBUL).date().isoformat()
             # Send init message with full state
             init_msg = {
                 "type": "init",
                 "snapshot": rt.snapshot(),
-                "aws_history": rt.aws_history(),
-                "metar_history": rt.metar_history(),
-                "forecast_history": rt.forecast_history(),
+                "history_day": current_day,
+                "aws_history": rt.aws_history(local_day=current_day),
+                "metar_history": rt.metar_history(local_day=current_day),
+                "forecast_history": rt.forecast_history(local_day=current_day),
             }
             await ws.send_json(init_msg)
 

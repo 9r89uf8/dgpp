@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from .client import MGMClient
@@ -55,6 +55,17 @@ def _parse_iso(value: str | None) -> datetime | None:
     return dt
 
 
+def _parse_local_day(value: date | str | None) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
 def _coerce_float(value: object, default: float = -9999) -> float:
     try:
         if value is None:
@@ -97,6 +108,7 @@ def _filter_rows(
     *,
     time_key: str,
     since: datetime | str | None = None,
+    until: datetime | str | None = None,
     limit: int | None = None,
 ) -> list[dict]:
     filtered = rows
@@ -106,9 +118,31 @@ def _filter_rows(
             row for row in filtered
             if str(row.get(time_key, "")) >= str(since_iso)
         ]
+    if until is not None:
+        until_iso = _serialize_val(until)
+        filtered = [
+            row for row in filtered
+            if str(row.get(time_key, "")) < str(until_iso)
+        ]
     if limit is not None:
         filtered = filtered[-limit:]
     return filtered
+
+
+def _local_day_bounds(
+    local_day: date | str | None,
+    timezone_name: str,
+) -> tuple[datetime, datetime] | None:
+    day = _parse_local_day(local_day)
+    if day is None:
+        return None
+    tz = ZoneInfo(timezone_name)
+    local_start = datetime.combine(day, time.min, tzinfo=tz)
+    local_end = local_start + timedelta(days=1)
+    return (
+        local_start.astimezone(UTC),
+        local_end.astimezone(UTC),
+    )
 
 
 class Runtime:
@@ -242,18 +276,24 @@ class Runtime:
     def metar_history(
         self,
         since: datetime | str | None = None,
+        local_day: date | str | None = None,
         limit: int | None = None,
     ) -> list[dict]:
+        bounds = _local_day_bounds(local_day, AIRPORT_TIMEZONE)
+        effective_since = bounds[0] if bounds else since
+        effective_until = bounds[1] if bounds else None
         if not self.db:
             return _filter_rows(
                 self.state.history,
                 time_key="detected_at",
-                since=since,
+                since=effective_since,
+                until=effective_until,
                 limit=limit,
             )
         rows = self.db.get_metar_history(
             AIRPORT_ICAO,
-            since=since,
+            since=effective_since,
+            until=effective_until,
             limit=limit,
             event_types=("new", "correction"),
         )
@@ -271,25 +311,32 @@ class Runtime:
         return _filter_rows(
             self.state.history,
             time_key="detected_at",
-            since=since,
+            since=effective_since,
+            until=effective_until,
             limit=limit,
         )
 
     def aws_history(
         self,
         since: datetime | str | None = None,
+        local_day: date | str | None = None,
         limit: int | None = None,
     ) -> list[dict]:
+        bounds = _local_day_bounds(local_day, AIRPORT_TIMEZONE)
+        effective_since = bounds[0] if bounds else since
+        effective_until = bounds[1] if bounds else None
         if not self.db:
             return _filter_rows(
                 self.state.aws_history,
                 time_key="veri_zamani",
-                since=since,
+                since=effective_since,
+                until=effective_until,
                 limit=limit,
             )
         rows = self.db.get_surface_history(
             AIRPORT_ICAO,
-            since=since,
+            since=effective_since,
+            until=effective_until,
             limit=limit,
         )
         history = [
@@ -314,25 +361,32 @@ class Runtime:
         return _filter_rows(
             self.state.aws_history,
             time_key="veri_zamani",
-            since=since,
+            since=effective_since,
+            until=effective_until,
             limit=limit,
         )
 
     def forecast_history(
         self,
         since: datetime | str | None = None,
+        local_day: date | str | None = None,
         limit: int | None = None,
     ) -> list[dict]:
+        bounds = _local_day_bounds(local_day, AIRPORT_TIMEZONE)
+        effective_since = bounds[0] if bounds else since
+        effective_until = bounds[1] if bounds else None
         if not self.db:
             return _filter_rows(
                 self.state.forecast_history,
                 time_key="fetched_at",
-                since=since,
+                since=effective_since,
+                until=effective_until,
                 limit=limit,
             )
         history = self.db.get_forecast_snapshots(
             AIRPORT_ICAO,
-            since=since,
+            since=effective_since,
+            until=effective_until,
             limit=limit,
         )
         if history:
@@ -340,7 +394,8 @@ class Runtime:
         return _filter_rows(
             self.state.forecast_history,
             time_key="fetched_at",
-            since=since,
+            since=effective_since,
+            until=effective_until,
             limit=limit,
         )
 

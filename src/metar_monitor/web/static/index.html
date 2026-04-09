@@ -90,6 +90,45 @@
     align-items: center;
     gap: 8px;
   }
+  #history-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .history-label {
+    color: #8b949e;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .history-input {
+    appearance: none;
+    border: 1px solid #30363d;
+    background: #0d1117;
+    color: #c9d1d9;
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+  .secondary-button {
+    appearance: none;
+    border: 1px solid #30363d;
+    background: #161b22;
+    color: #c9d1d9;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .secondary-button:hover:not(:disabled) {
+    background: #1b2430;
+  }
+  #history-status {
+    color: #8b949e;
+    font-size: 12px;
+    min-height: 16px;
+  }
   .danger-button {
     appearance: none;
     border: 1px solid #da3633;
@@ -137,6 +176,12 @@
   <div>
     <span id="connection-status" class="disconnected">DISCONNECTED</span>
   </div>
+  <div id="history-controls">
+    <span class="history-label">Charts Day</span>
+    <input id="history-day-input" class="history-input" type="date">
+    <button id="history-day-today-btn" class="secondary-button" type="button">Today</button>
+    <span id="history-status"></span>
+  </div>
   <div id="admin-controls">
     <button id="clear-history-btn" class="danger-button" type="button">Clear SQLite History</button>
     <span id="admin-status"></span>
@@ -159,6 +204,7 @@
 </div>
 
 <div class="chart-container chart-scroll"><div id="temp-chart"></div></div>
+<div class="chart-note">Charts use the selected Istanbul local day. The top status bar and observation cards remain live.</div>
 <div class="chart-note">Dashed orange line is Ankara center 3-hour forecast guidance. Passed buckets stay on the chart at their last-seen forecast value so you can compare them with the observed temperatures. Red dotted line is the LTAC airport daily forecast max.</div>
 <div class="chart-container"><div id="neighbor-chart"></div></div>
 <div class="chart-note">Neighbor ring uses the 5-minute Ankara province AWS bulk fetch for Esenboga, Akyurt, Pursaklar, Cubuk, and Ankara center. These are comparison lines, not bias-corrected temperatures.</div>
@@ -179,11 +225,13 @@
 const ISTANBUL_OFFSET = 3 * 60 * 60 * 1000; // UTC+3
 const METAR_PUBLISH_MINUTES = [20, 50];
 const AWS_PUBLISH_MINUTES = [6, 15, 27, 39, 48, 54];
-let currentAnkaraDayKey = getCurrentAnkaraDayKey();
+let todayAnkaraDayKey = getCurrentAnkaraDayKey();
+let selectedAnkaraDayKey = todayAnkaraDayKey;
 let lastSnapshot = null;
 let rawAwsHistory = [];
 let rawMetarHistory = [];
 let rawForecastHistory = [];
+const historyCache = new Map();
 
 function toLocal(iso) {
   const d = new Date(iso);
@@ -234,6 +282,58 @@ function formatHourLabel(hourDecimal) {
   const ampm = h24 >= 12 ? 'PM' : 'AM';
   const h12 = h24 % 12 || 12;
   return `${h12}:${String(mins).padStart(2, '0')} ${ampm}`;
+}
+
+function emptyHistoryBundle() {
+  return {
+    aws_history: [],
+    metar_history: [],
+    forecast_history: [],
+  };
+}
+
+function cacheHistoryDay(dayKey, bundle) {
+  historyCache.set(dayKey, {
+    aws_history: [...(bundle.aws_history || [])],
+    metar_history: [...(bundle.metar_history || [])],
+    forecast_history: [...(bundle.forecast_history || [])],
+  });
+}
+
+function ensureHistoryDay(dayKey) {
+  if (!historyCache.has(dayKey)) {
+    historyCache.set(dayKey, emptyHistoryBundle());
+  }
+  return historyCache.get(dayKey);
+}
+
+function useHistoryDay(dayKey) {
+  selectedAnkaraDayKey = dayKey;
+  const bundle = ensureHistoryDay(dayKey);
+  rawAwsHistory = bundle.aws_history;
+  rawMetarHistory = bundle.metar_history;
+  rawForecastHistory = bundle.forecast_history;
+  document.getElementById('history-day-input').value = dayKey;
+  updateHistoryStatus();
+}
+
+function updateHistoryStatus(message = '') {
+  const suffix = message ? ` | ${message}` : '';
+  const label = selectedAnkaraDayKey === todayAnkaraDayKey
+    ? 'Viewing charts: today'
+    : `Viewing charts: ${selectedAnkaraDayKey}`;
+  document.getElementById('history-status').textContent = `${label}${suffix}`;
+}
+
+function upsertEntry(entries, entry, keyFn) {
+  const key = keyFn(entry);
+  if (!key) return;
+  const idx = entries.findIndex((item) => keyFn(item) === key);
+  if (idx >= 0) {
+    entries[idx] = entry;
+  } else {
+    entries.push(entry);
+  }
 }
 
 function buildMinuteTicks(stepMinutes = 30, labelEveryMinutes = 60) {
@@ -502,7 +602,7 @@ function rebuildChartSeries() {
   regionalForecastTraces = [];
 
   for (const e of rawAwsHistory) {
-    if (localDayKeyFromIso(e.veri_zamani) !== currentAnkaraDayKey) continue;
+    if (localDayKeyFromIso(e.veri_zamani) !== selectedAnkaraDayKey) continue;
     const t = toChartMinute(e.veri_zamani);
     if (e.sicaklik != null && e.sicaklik !== -9999) {
       tempTimes.push(t); tempVals.push(e.sicaklik);
@@ -523,7 +623,7 @@ function rebuildChartSeries() {
   }
 
   for (const e of rawMetarHistory) {
-    if (localDayKeyFromIso(e.detected_at) !== currentAnkaraDayKey) continue;
+    if (localDayKeyFromIso(e.detected_at) !== selectedAnkaraDayKey) continue;
     const t = toChartMinute(e.detected_at);
     // Parse temp from METAR text (TT/DD pattern)
     const m = (e.metar || '').match(/\b(M?\d{2})\/(M?\d{2})\b/);
@@ -535,7 +635,7 @@ function rebuildChartSeries() {
   }
 
   for (const e of rawForecastHistory) {
-    if (localDayKeyFromIso(e.fetched_at) !== currentAnkaraDayKey) continue;
+    if (localDayKeyFromIso(e.fetched_at) !== selectedAnkaraDayKey) continue;
     const t = toChartMinute(e.fetched_at);
     forecastRevisionTimes.push(t);
     forecastRevisionLtacMax.push(e.ltac_daily_max ?? null);
@@ -545,10 +645,10 @@ function rebuildChartSeries() {
 
   const bucketMap = new Map();
   for (const snapshot of rawForecastHistory) {
-    if (localDayKeyFromIso(snapshot.fetched_at) !== currentAnkaraDayKey) continue;
+    if (localDayKeyFromIso(snapshot.fetched_at) !== selectedAnkaraDayKey) continue;
     const fetchedMinute = toChartMinute(snapshot.fetched_at);
     for (const point of (snapshot.ankara_shape || [])) {
-      if (localDayKeyFromIso(point.tarih) !== currentAnkaraDayKey) continue;
+      if (localDayKeyFromIso(point.tarih) !== selectedAnkaraDayKey) continue;
       const validMinute = toChartMinute(point.tarih);
       if (validMinute == null || point.sicaklik == null) continue;
       const key = String(validMinute);
@@ -580,12 +680,12 @@ function rebuildChartSeries() {
 
   const neighborMap = new Map();
   for (const snapshot of rawForecastHistory) {
-    if (localDayKeyFromIso(snapshot.fetched_at) !== currentAnkaraDayKey) continue;
+    if (localDayKeyFromIso(snapshot.fetched_at) !== selectedAnkaraDayKey) continue;
     for (const point of (snapshot.neighbor_ring || [])) {
       const temp = point.sicaklik;
       const pointTime = point.veri_zamani || snapshot.fetched_at;
       if (temp == null || temp === -9999 || !pointTime) continue;
-      if (localDayKeyFromIso(pointTime) !== currentAnkaraDayKey) continue;
+      if (localDayKeyFromIso(pointTime) !== selectedAnkaraDayKey) continue;
       const label = String(point.label || `STATION ${point.station_id || ''}`).toUpperCase();
       const stationId = String(point.station_id || label);
       if (!neighborMap.has(label)) {
@@ -625,7 +725,7 @@ function rebuildChartSeries() {
 
   const regionalForecastMap = new Map();
   for (const snapshot of rawForecastHistory) {
-    if (localDayKeyFromIso(snapshot.fetched_at) !== currentAnkaraDayKey) continue;
+    if (localDayKeyFromIso(snapshot.fetched_at) !== selectedAnkaraDayKey) continue;
     const fetchedMinute = toChartMinute(snapshot.fetched_at);
     if (fetchedMinute == null) continue;
 
@@ -678,15 +778,18 @@ function updateForecastSeries(snap) {
   const retainedForecastPoints = [];
   const retainedByValidTime = new Map();
   const sortedSnapshots = [...rawForecastHistory]
-    .filter((snapshot) => localDayKeyFromIso(snapshot.fetched_at) === currentAnkaraDayKey)
+    .filter((snapshot) => localDayKeyFromIso(snapshot.fetched_at) === selectedAnkaraDayKey)
     .sort((a, b) => String(a.fetched_at).localeCompare(String(b.fetched_at)));
+  const selectedLatestForecast = sortedSnapshots.length
+    ? sortedSnapshots[sortedSnapshots.length - 1]
+    : null;
 
   for (const snapshot of sortedSnapshots) {
     for (const point of (snapshot.ankara_shape || [])) {
       if (
         point.tarih == null ||
         point.sicaklik == null ||
-        localDayKeyFromIso(point.tarih) !== currentAnkaraDayKey
+        localDayKeyFromIso(point.tarih) !== selectedAnkaraDayKey
       ) {
         continue;
       }
@@ -710,11 +813,11 @@ function updateForecastSeries(snap) {
       forecastVals.push(point.temp);
     }
   } else {
-    for (const point of (tt.ankara_shape || [])) {
+    for (const point of (selectedLatestForecast?.ankara_shape || tt.ankara_shape || [])) {
       if (
         point.tarih != null &&
         point.sicaklik != null &&
-        localDayKeyFromIso(point.tarih) === currentAnkaraDayKey
+        localDayKeyFromIso(point.tarih) === selectedAnkaraDayKey
       ) {
         forecastTimes.push(toChartMinute(point.tarih));
         forecastVals.push(point.sicaklik);
@@ -724,7 +827,8 @@ function updateForecastSeries(snap) {
 
   forecastMaxTimes = [];
   forecastMaxVals = [];
-  if (tt.forecast_daily_max != null) {
+  const forecastDailyMax = selectedLatestForecast?.ltac_daily_max ?? tt.forecast_daily_max;
+  if (forecastDailyMax != null) {
     const allTimes = [...tempTimes, ...forecastTimes, ...metarTimes]
       .filter(Boolean)
       .sort((a, b) => a - b);
@@ -732,7 +836,7 @@ function updateForecastSeries(snap) {
       const minTime = allTimes[0];
       const maxTime = allTimes[allTimes.length - 1];
       forecastMaxTimes = [minTime, maxTime];
-      forecastMaxVals = [tt.forecast_daily_max, tt.forecast_daily_max];
+      forecastMaxVals = [forecastDailyMax, forecastDailyMax];
     }
   }
 }
@@ -769,13 +873,82 @@ function updateCharts() {
   Plotly.update('hum-press-chart', { x: [humTimes, pressTimes], y: [humVals, pressVals] });
 }
 
-function maybeAppendForecastSnapshot(forecastSnap) {
+function cacheForecastSnapshot(forecastSnap) {
   if (!forecastSnap || !forecastSnap.fetched_at) return;
-  const idx = rawForecastHistory.findIndex((e) => e.fetched_at === forecastSnap.fetched_at);
-  if (idx >= 0) {
-    rawForecastHistory[idx] = forecastSnap;
-  } else {
-    rawForecastHistory.push(forecastSnap);
+  const dayKey = localDayKeyFromIso(forecastSnap.fetched_at);
+  if (!dayKey) return;
+  const bundle = ensureHistoryDay(dayKey);
+  upsertEntry(bundle.forecast_history, forecastSnap, (entry) => entry.fetched_at);
+}
+
+function cacheAwsUpdate(payload) {
+  if (!payload || !payload.veri_zamani) return;
+  const dayKey = localDayKeyFromIso(payload.veri_zamani);
+  if (!dayKey) return;
+  const bundle = ensureHistoryDay(dayKey);
+  upsertEntry(bundle.aws_history, payload, (entry) => entry.veri_zamani);
+}
+
+function cacheMetarEvent(payload) {
+  if (!payload || !payload.detected_at) return;
+  const dayKey = localDayKeyFromIso(payload.detected_at);
+  if (!dayKey) return;
+  const bundle = ensureHistoryDay(dayKey);
+  upsertEntry(
+    bundle.metar_history,
+    {
+      metar: payload.metar_raw,
+      ddhhmmz: payload.ddhhmmz,
+      detected_at: payload.detected_at,
+      event_type: payload.event_type,
+    },
+    (entry) => `${entry.detected_at}|${entry.ddhhmmz || ''}|${entry.event_type || ''}`,
+  );
+}
+
+async function fetchHistoryDay(dayKey) {
+  const query = `?local_day=${encodeURIComponent(dayKey)}`;
+  const [awsResponse, metarResponse, forecastResponse] = await Promise.all([
+    fetch(`/api/history/aws${query}`),
+    fetch(`/api/history/metar${query}`),
+    fetch(`/api/history/forecast${query}`),
+  ]);
+
+  if (!awsResponse.ok || !metarResponse.ok || !forecastResponse.ok) {
+    throw new Error('history request failed');
+  }
+
+  const [aws_history, metar_history, forecast_history] = await Promise.all([
+    awsResponse.json(),
+    metarResponse.json(),
+    forecastResponse.json(),
+  ]);
+  return { aws_history, metar_history, forecast_history };
+}
+
+async function loadHistoryDay(dayKey) {
+  updateHistoryStatus('Loading...');
+  document.getElementById('history-day-input').disabled = true;
+  document.getElementById('history-day-today-btn').disabled = true;
+
+  try {
+    if (!historyCache.has(dayKey)) {
+      cacheHistoryDay(dayKey, await fetchHistoryDay(dayKey));
+    }
+    useHistoryDay(dayKey);
+    if (lastSnapshot) {
+      updateStatus(lastSnapshot);
+    } else {
+      rebuildChartSeries();
+      updateForecastSeries(null);
+      updateCharts();
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    updateHistoryStatus(`Load failed: ${message}`);
+  } finally {
+    document.getElementById('history-day-input').disabled = false;
+    document.getElementById('history-day-today-btn').disabled = false;
   }
 }
 
@@ -960,12 +1133,7 @@ function applyImmediateMetarEvent(payload) {
   lastSnapshot.current_metar_detected_at = payload.detected_at || lastSnapshot.current_metar_detected_at || null;
   lastSnapshot.last_error = null;
 
-  rawMetarHistory.push({
-    metar: payload.metar_raw,
-    ddhhmmz: payload.ddhhmmz,
-    detected_at: payload.detected_at,
-    event_type: payload.event_type,
-  });
+  cacheMetarEvent(payload);
 
   document.getElementById('metar-box').textContent = payload.metar_raw || '';
   document.getElementById('metar-box').classList.add('new');
@@ -979,7 +1147,7 @@ function applyImmediateAwsEvent(payload) {
   if (!lastSnapshot) lastSnapshot = {};
   if (!lastSnapshot.current_observation) lastSnapshot.current_observation = {};
 
-  rawAwsHistory.push(payload);
+  cacheAwsUpdate(payload);
   lastSnapshot.current_observation = {
     ...lastSnapshot.current_observation,
     ...payload,
@@ -1019,7 +1187,8 @@ function applyImmediateTempEvent(payload) {
 function updateStatus(snap) {
   if (!snap) return;
   lastSnapshot = snap;
-  maybeAppendForecastSnapshot(snap.latest_forecast_snapshot);
+  cacheForecastSnapshot(snap.latest_forecast_snapshot);
+  useHistoryDay(selectedAnkaraDayKey);
   rebuildChartSeries();
   updateForecastSeries(snap);
   const obs = snap.current_observation;
@@ -1102,9 +1271,13 @@ async function clearHistory() {
       throw new Error(payload.detail || 'request failed');
     }
 
-    rawAwsHistory = payload.aws_history || [];
-    rawMetarHistory = payload.metar_history || [];
-    rawForecastHistory = payload.forecast_history || [];
+    historyCache.clear();
+    cacheHistoryDay(todayAnkaraDayKey, {
+      aws_history: payload.aws_history || [],
+      metar_history: payload.metar_history || [],
+      forecast_history: payload.forecast_history || [],
+    });
+    useHistoryDay(todayAnkaraDayKey);
     setError('');
     updateStatus(payload.snapshot);
     setAdminStatus(`Cleared ${payload.cleared?.sqlite_total_rows ?? 0} SQLite rows`);
@@ -1126,10 +1299,14 @@ setInterval(() => {
     `${h12}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')} ${ampm}`;
   updateScheduleCountdowns();
   const newDayKey = getCurrentAnkaraDayKey();
-  if (newDayKey !== currentAnkaraDayKey) {
-    currentAnkaraDayKey = newDayKey;
-    if (lastSnapshot) {
-      updateStatus(lastSnapshot);
+  if (newDayKey !== todayAnkaraDayKey) {
+    const wasViewingToday = selectedAnkaraDayKey === todayAnkaraDayKey;
+    todayAnkaraDayKey = newDayKey;
+    document.getElementById('history-day-input').max = todayAnkaraDayKey;
+    if (wasViewingToday) {
+      loadHistoryDay(todayAnkaraDayKey);
+    } else {
+      updateHistoryStatus();
     }
   }
 }, 1000);
@@ -1155,10 +1332,13 @@ function connect() {
     const msg = JSON.parse(evt.data);
 
     if (msg.type === 'init') {
-      // Load historical data
-      rawAwsHistory = msg.aws_history || [];
-      rawMetarHistory = msg.metar_history || [];
-      rawForecastHistory = msg.forecast_history || [];
+      const dayKey = msg.history_day || todayAnkaraDayKey;
+      cacheHistoryDay(dayKey, {
+        aws_history: msg.aws_history || [],
+        metar_history: msg.metar_history || [],
+        forecast_history: msg.forecast_history || [],
+      });
+      useHistoryDay(selectedAnkaraDayKey);
       updateStatus(msg.snapshot);
     }
     else if (msg.type === 'stats_tick') {
@@ -1181,7 +1361,17 @@ function connect() {
 
 initCharts();
 updateScheduleCountdowns();
+document.getElementById('history-day-input').value = selectedAnkaraDayKey;
+document.getElementById('history-day-input').max = todayAnkaraDayKey;
+document.getElementById('history-day-input').addEventListener('change', (event) => {
+  const dayKey = event.target.value || todayAnkaraDayKey;
+  loadHistoryDay(dayKey);
+});
+document.getElementById('history-day-today-btn').addEventListener('click', () => {
+  loadHistoryDay(todayAnkaraDayKey);
+});
 document.getElementById('clear-history-btn').addEventListener('click', clearHistory);
+updateHistoryStatus();
 connect();
 </script>
 </body>
