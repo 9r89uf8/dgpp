@@ -150,6 +150,8 @@ class Monitor:
         daily_max: float | None = None
         shape: list[tuple[datetime, float]] = []
         neighbor_ring: list[dict] = []
+        context_stations: list[dict] = []
+        regional_daily_context: list[dict] = []
 
         try:
             daily_max = await self.client.fetch_ltac_daily_forecast()
@@ -179,7 +181,43 @@ class Monitor:
         except Exception as e:
             log.warning("Ankara station ring fetch failed: %s", e)
 
-        if daily_max is not None or shape or neighbor_ring:
+        try:
+            resolved_locations = await self.client.fetch_ankara_context_locations(
+                _NEIGHBOR_RING_STATION_IDS,
+            )
+            context_stations = [
+                self._context_station_entry(location)
+                for location in resolved_locations
+            ]
+            context_forecast_tasks = [
+                self.client.fetch_daily_forecast_by_merkez_id(
+                    int(location["daily_forecast_id"])
+                )
+                for location in resolved_locations
+                if location.get("daily_forecast_id") is not None
+                and int(location.get("station_id", 0)) != MGM_OBS_ISTNO
+            ]
+            context_forecast_locations = [
+                location
+                for location in resolved_locations
+                if location.get("daily_forecast_id") is not None
+                and int(location.get("station_id", 0)) != MGM_OBS_ISTNO
+            ]
+            if context_forecast_tasks:
+                context_forecasts = await asyncio.gather(*context_forecast_tasks)
+                regional_daily_context = [
+                    self._regional_daily_context_entry(location, forecast_payload)
+                    for location, forecast_payload in zip(
+                        context_forecast_locations,
+                        context_forecasts,
+                        strict=False,
+                    )
+                    if forecast_payload is not None
+                ]
+        except Exception as e:
+            log.warning("Regional daily context fetch failed: %s", e)
+
+        if daily_max is not None or shape or neighbor_ring or regional_daily_context:
             peak_temp: float | None = None
             peak_time_iso: str | None = None
             snapshot = {
@@ -195,6 +233,8 @@ class Monitor:
                     for point_time, temp_c in shape
                 ],
                 "neighbor_ring": neighbor_ring,
+                "context_stations": context_stations,
+                "regional_daily_context": regional_daily_context,
             }
             if shape:
                 peak_time, peak_temp = max(shape, key=lambda x: x[1])
@@ -218,6 +258,8 @@ class Monitor:
                     ankara_peak_time_iso=peak_time_iso,
                     ankara_shape=snapshot["ankara_shape"],
                     neighbor_ring=neighbor_ring,
+                    context_stations=context_stations,
+                    regional_daily_context=regional_daily_context,
                 )
 
         self._last_forecast_fetch = _time.monotonic()
@@ -369,6 +411,37 @@ class Monitor:
             "denize_indirgenmis_basinc": obs.denize_indirgenmis_basinc,
             "kapalilik": obs.kapalilik,
             "hadise_kodu": obs.hadise_kodu,
+        }
+
+    @staticmethod
+    def _context_station_entry(location: dict) -> dict:
+        station_id = int(location.get("station_id", 0))
+        return {
+            "station_id": station_id,
+            "label": _NEIGHBOR_RING_LABELS.get(station_id, f"STATION {station_id}"),
+            "district_name": location.get("district_name"),
+            "province_name": location.get("province_name"),
+            "lat": location.get("lat"),
+            "lon": location.get("lon"),
+            "elevation_m": location.get("elevation_m"),
+            "daily_forecast_id": location.get("daily_forecast_id"),
+            "hourly_forecast_id": location.get("hourly_forecast_id"),
+        }
+
+    @staticmethod
+    def _regional_daily_context_entry(location: dict, payload: dict) -> dict:
+        station_id = int(location.get("station_id", 0))
+        return {
+            "station_id": station_id,
+            "label": _NEIGHBOR_RING_LABELS.get(station_id, f"STATION {station_id}"),
+            "district_name": location.get("district_name"),
+            "daily_forecast_id": location.get("daily_forecast_id"),
+            "forecast_date": payload.get("tarihGun1") or payload.get("tarihGun0"),
+            "forecast_daily_max": payload.get("enYuksekGun1", payload.get("enYuksekGun0")),
+            "forecast_daily_min": payload.get("enDusukGun1", payload.get("enDusukGun0")),
+            "hadise": payload.get("hadiseGun1", payload.get("hadiseGun0")),
+            "wind_dir": payload.get("ruzgarYonGun1", payload.get("ruzgarYonGun0")),
+            "wind_speed": payload.get("ruzgarHizGun1", payload.get("ruzgarHizGun0")),
         }
 
     def _should_persist_surface_observation(self, obs: Observation) -> bool:

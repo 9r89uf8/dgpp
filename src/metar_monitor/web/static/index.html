@@ -66,6 +66,22 @@
   .chart-note {
     margin: 0 20px 10px; color: #8b949e; font-size: 12px;
   }
+  .map-panel {
+    margin: 5px 20px 10px;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 8px;
+  }
+  #spatial-map {
+    width: 100%;
+    min-height: 360px;
+  }
+  .map-empty {
+    color: #8b949e;
+    font-size: 13px;
+    padding: 12px;
+  }
   #connection-status { font-size: 11px; }
   .connected { color: #3fb950; }
   .disconnected { color: #f85149; }
@@ -143,9 +159,13 @@
 </div>
 
 <div class="chart-container chart-scroll"><div id="temp-chart"></div></div>
-<div class="chart-note">Dashed orange line is Ankara center 3-hour forecast guidance. Red dotted line is the LTAC airport daily forecast max.</div>
+<div class="chart-note">Dashed orange line is Ankara center 3-hour forecast guidance. Passed buckets stay on the chart at their last-seen forecast value so you can compare them with the observed temperatures. Red dotted line is the LTAC airport daily forecast max.</div>
 <div class="chart-container"><div id="neighbor-chart"></div></div>
-<div class="chart-note">Neighbor ring uses the 5-minute Ankara province AWS bulk fetch for Esenboga, Akyurt, Pursaklar, and Cubuk. These are comparison lines, not bias-corrected temperatures.</div>
+<div class="chart-note">Neighbor ring uses the 5-minute Ankara province AWS bulk fetch for Esenboga, Akyurt, Pursaklar, Cubuk, and Ankara center. These are comparison lines, not bias-corrected temperatures.</div>
+<div class="chart-container"><div id="regional-forecast-chart"></div></div>
+<div class="chart-note">Regional daily forecast context shows LTAC airport daily max against Ankara, Akyurt, Pursaklar, and Cubuk district daily max forecasts. These are context lines, not replacements for the LTAC airport forecast.</div>
+<div class="map-panel"><div id="spatial-map"></div></div>
+<div class="chart-note">Spatial context is centered on Esenboga using official MGM coordinates for the selected stations. LTAC updates live; the surrounding stations refresh on the 5-minute province-context fetch.</div>
 <div class="chart-container"><div id="forecast-revision-chart"></div></div>
 <div class="chart-note">Forecast revision history: red shows LTAC airport daily max, orange shows Ankara center 3-hour forecast peak temperature, and green shows the Ankara center forecast peak hour.</div>
 <div class="chart-container"><div id="forecast-bucket-chart"></div></div>
@@ -327,17 +347,27 @@ let humTimes = [], humVals = [], pressTimes = [], pressVals = [];
 let forecastRevisionTimes = [], forecastRevisionLtacMax = [], forecastRevisionAnkaraMax = [], forecastRevisionAnkaraPeakHour = [];
 let forecastBucketTraces = [];
 let neighborRingTraces = [];
+let regionalForecastTraces = [];
 
 const MINUTE_TICKS = buildMinuteTicks(30, 60);
 const HOUR_TICK_VALS = [0, 3, 6, 9, 12, 15, 18, 21, 24];
 const HOUR_TICK_TEXT = HOUR_TICK_VALS.map((v) => formatHourLabel(v));
 const FORECAST_BUCKET_COLORS = ['#58a6ff', '#d2a8ff', '#3fb950', '#79c0ff', '#ffa657', '#f85149', '#a5d6ff', '#e3b3ff'];
-const NEIGHBOR_RING_ORDER = ['ESENBOGA', 'AKYURT', 'PURSAKLAR', 'CUBUK'];
+const NEIGHBOR_RING_ORDER = ['ESENBOGA', 'AKYURT', 'PURSAKLAR', 'CUBUK', 'ANKARA'];
 const NEIGHBOR_RING_COLORS = {
   ESENBOGA: '#58a6ff',
   AKYURT: '#ffa657',
   PURSAKLAR: '#3fb950',
   CUBUK: '#f85149',
+  ANKARA: '#d2a8ff',
+};
+const REGIONAL_FORECAST_ORDER = ['LTAC', 'ANKARA', 'AKYURT', 'PURSAKLAR', 'CUBUK'];
+const REGIONAL_FORECAST_COLORS = {
+  LTAC: '#f85149',
+  ANKARA: '#ffa657',
+  AKYURT: '#58a6ff',
+  PURSAKLAR: '#3fb950',
+  CUBUK: '#d2a8ff',
 };
 
 const chartLayout = {
@@ -407,6 +437,14 @@ function initCharts() {
     legend: { orientation: 'h' },
   }, { responsive: true });
 
+  Plotly.newPlot('regional-forecast-chart', regionalForecastTraces, {
+    ...chartLayout,
+    title: { text: 'Regional Daily Max Forecast Context', font: { size: 13, color: '#8b949e' } },
+    yaxis: { ...chartLayout.yaxis, title: '°C', automargin: true },
+    height: 240,
+    legend: { orientation: 'h' },
+  }, { responsive: true });
+
   Plotly.newPlot('forecast-bucket-chart', forecastBucketTraces, {
     ...chartLayout,
     title: { text: 'Ankara 3h Bucket Revisions', font: { size: 13, color: '#8b949e' } },
@@ -461,6 +499,7 @@ function rebuildChartSeries() {
   forecastRevisionAnkaraPeakHour = [];
   forecastBucketTraces = [];
   neighborRingTraces = [];
+  regionalForecastTraces = [];
 
   for (const e of rawAwsHistory) {
     if (localDayKeyFromIso(e.veri_zamani) !== currentAnkaraDayKey) continue;
@@ -583,21 +622,103 @@ function rebuildChartSeries() {
         marker: { size: 6 },
       };
     });
+
+  const regionalForecastMap = new Map();
+  for (const snapshot of rawForecastHistory) {
+    if (localDayKeyFromIso(snapshot.fetched_at) !== currentAnkaraDayKey) continue;
+    const fetchedMinute = toChartMinute(snapshot.fetched_at);
+    if (fetchedMinute == null) continue;
+
+    if (snapshot.ltac_daily_max != null) {
+      if (!regionalForecastMap.has('LTAC')) {
+        regionalForecastMap.set('LTAC', []);
+      }
+      regionalForecastMap.get('LTAC').push({
+        x: fetchedMinute,
+        y: snapshot.ltac_daily_max,
+      });
+    }
+
+    for (const point of (snapshot.regional_daily_context || [])) {
+      const label = String(point.label || '').toUpperCase();
+      const temp = point.forecast_daily_max;
+      if (!label || temp == null || temp === -9999) continue;
+      if (!regionalForecastMap.has(label)) {
+        regionalForecastMap.set(label, []);
+      }
+      regionalForecastMap.get(label).push({
+        x: fetchedMinute,
+        y: temp,
+      });
+    }
+  }
+
+  regionalForecastTraces = Array.from(regionalForecastMap.entries())
+    .sort((a, b) => {
+      const idxA = REGIONAL_FORECAST_ORDER.indexOf(a[0]);
+      const idxB = REGIONAL_FORECAST_ORDER.indexOf(b[0]);
+      return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB);
+    })
+    .map(([label, points]) => ({
+      x: points.map((point) => point.x),
+      y: points.map((point) => point.y),
+      name: label === 'LTAC' ? 'LTAC Airport' : label,
+      type: 'scatter',
+      mode: 'lines+markers',
+      line: { color: REGIONAL_FORECAST_COLORS[label] || '#8b949e', width: 2 },
+      marker: { size: 6 },
+    }));
 }
 
 function updateForecastSeries(snap) {
-  const tt = snap?.temp_tracker || {};
-
   forecastTimes = [];
   forecastVals = [];
-  for (const point of (tt.ankara_shape || [])) {
-    if (
-      point.tarih != null &&
-      point.sicaklik != null &&
-      localDayKeyFromIso(point.tarih) === currentAnkaraDayKey
-    ) {
-      forecastTimes.push(toChartMinute(point.tarih));
-      forecastVals.push(point.sicaklik);
+  const tt = snap?.temp_tracker || {};
+
+  const retainedForecastPoints = [];
+  const retainedByValidTime = new Map();
+  const sortedSnapshots = [...rawForecastHistory]
+    .filter((snapshot) => localDayKeyFromIso(snapshot.fetched_at) === currentAnkaraDayKey)
+    .sort((a, b) => String(a.fetched_at).localeCompare(String(b.fetched_at)));
+
+  for (const snapshot of sortedSnapshots) {
+    for (const point of (snapshot.ankara_shape || [])) {
+      if (
+        point.tarih == null ||
+        point.sicaklik == null ||
+        localDayKeyFromIso(point.tarih) !== currentAnkaraDayKey
+      ) {
+        continue;
+      }
+      retainedByValidTime.set(String(point.tarih), {
+        minute: toChartMinute(point.tarih),
+        temp: point.sicaklik,
+      });
+    }
+  }
+
+  for (const point of retainedByValidTime.values()) {
+    if (point.minute != null) {
+      retainedForecastPoints.push(point);
+    }
+  }
+  retainedForecastPoints.sort((a, b) => a.minute - b.minute);
+
+  if (retainedForecastPoints.length > 0) {
+    for (const point of retainedForecastPoints) {
+      forecastTimes.push(point.minute);
+      forecastVals.push(point.temp);
+    }
+  } else {
+    for (const point of (tt.ankara_shape || [])) {
+      if (
+        point.tarih != null &&
+        point.sicaklik != null &&
+        localDayKeyFromIso(point.tarih) === currentAnkaraDayKey
+      ) {
+        forecastTimes.push(toChartMinute(point.tarih));
+        forecastVals.push(point.sicaklik);
+      }
     }
   }
 
@@ -625,6 +746,13 @@ function updateCharts() {
   Plotly.react('neighbor-chart', neighborRingTraces, {
     ...chartLayout,
     title: { text: 'Airport Ring Temperatures', font: { size: 13, color: '#8b949e' } },
+    yaxis: { ...chartLayout.yaxis, title: '°C', automargin: true },
+    height: 240,
+    legend: { orientation: 'h' },
+  }, { responsive: true });
+  Plotly.react('regional-forecast-chart', regionalForecastTraces, {
+    ...chartLayout,
+    title: { text: 'Regional Daily Max Forecast Context', font: { size: 13, color: '#8b949e' } },
     yaxis: { ...chartLayout.yaxis, title: '°C', automargin: true },
     height: 240,
     legend: { orientation: 'h' },
@@ -664,6 +792,165 @@ function setError(message) {
 
 function setAdminStatus(message) {
   document.getElementById('admin-status').textContent = message || '';
+}
+
+function fmtTempShort(val) {
+  if (val == null || val === -9999) return '--';
+  return `${Number(val).toFixed(1)}°C`;
+}
+
+function tempColor(val) {
+  if (val == null || val === -9999 || Number.isNaN(Number(val))) return '#8b949e';
+  const temp = Number(val);
+  if (temp <= -4) return '#79c0ff';
+  if (temp <= 0) return '#58a6ff';
+  if (temp <= 4) return '#3fb950';
+  if (temp <= 8) return '#ffa657';
+  return '#f85149';
+}
+
+function stationDisplayName(label) {
+  switch (String(label || '').toUpperCase()) {
+    case 'ESENBOGA':
+      return 'Esenboga';
+    case 'AKYURT':
+      return 'Akyurt';
+    case 'PURSAKLAR':
+      return 'Pursaklar';
+    case 'CUBUK':
+      return 'Cubuk';
+    case 'ANKARA':
+      return 'Ankara';
+    default:
+      return label || '--';
+  }
+}
+
+function arrowVectorFromWindDir(dirDeg, length = 18) {
+  if (dirDeg == null || dirDeg === -9999 || Number.isNaN(Number(dirDeg))) {
+    return null;
+  }
+  const rad = Number(dirDeg) * Math.PI / 180;
+  return {
+    dx: Math.sin(rad) * length,
+    dy: -Math.cos(rad) * length,
+  };
+}
+
+function renderSpatialMap(snap) {
+  const el = document.getElementById('spatial-map');
+  const latestForecast = snap?.latest_forecast_snapshot || {};
+  const contextStations = latestForecast.context_stations || [];
+  if (!contextStations.length) {
+    el.innerHTML = '<div class="map-empty">Waiting for station context...</div>';
+    return;
+  }
+
+  const ltacMeta = contextStations.find((station) => station.station_id === 17128);
+  if (!ltacMeta || ltacMeta.lat == null || ltacMeta.lon == null) {
+    el.innerHTML = '<div class="map-empty">Missing Esenboga coordinates.</div>';
+    return;
+  }
+
+  const latestRingById = new Map();
+  for (const point of (latestForecast.neighbor_ring || [])) {
+    latestRingById.set(Number(point.station_id), point);
+  }
+
+  const dailyForecastById = new Map();
+  for (const point of (latestForecast.regional_daily_context || [])) {
+    dailyForecastById.set(Number(point.station_id), point);
+  }
+
+  const points = contextStations
+    .filter((station) => station.lat != null && station.lon != null)
+    .map((station) => {
+      const stationId = Number(station.station_id);
+      const ring = latestRingById.get(stationId) || null;
+      const live = stationId === 17128 ? (snap.current_observation || {}) : (ring || {});
+      const daily = dailyForecastById.get(stationId) || null;
+      const lat0 = Number(ltacMeta.lat);
+      const lon0 = Number(ltacMeta.lon);
+      const lat = Number(station.lat);
+      const lon = Number(station.lon);
+      const dyKm = (lat - lat0) * 111.32;
+      const dxKm = (lon - lon0) * Math.cos(lat0 * Math.PI / 180) * 111.32;
+      return {
+        stationId,
+        label: String(station.label || station.station_id),
+        name: stationDisplayName(station.label),
+        districtName: station.district_name || null,
+        dxKm,
+        dyKm,
+        temp: live.sicaklik,
+        windDir: live.ruzgar_yon,
+        windSpeed: live.ruzgar_hiz,
+        currentTime: live.veri_zamani || null,
+        dailyMax: stationId === 17128
+          ? latestForecast.ltac_daily_max
+          : (daily ? daily.forecast_daily_max : null),
+      };
+    });
+
+  const width = 760;
+  const height = 360;
+  const padding = 54;
+  const centerX = width / 2;
+  const centerY = height / 2;
+  let maxDistanceKm = 1;
+  for (const point of points) {
+    maxDistanceKm = Math.max(
+      maxDistanceKm,
+      Math.abs(point.dxKm),
+      Math.abs(point.dyKm),
+    );
+  }
+  const scale = (Math.min(width, height) / 2 - padding) / maxDistanceKm;
+
+  const svgParts = [
+    `<svg viewBox="0 0 ${width} ${height}" width="100%" height="360" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Spatial temperature context map">`,
+    `<rect x="0" y="0" width="${width}" height="${height}" fill="#161b22" rx="8" />`,
+    `<line x1="${centerX}" y1="${padding - 12}" x2="${centerX}" y2="${height - padding + 12}" stroke="#30363d" stroke-dasharray="4 4" />`,
+    `<line x1="${padding - 12}" y1="${centerY}" x2="${width - padding + 12}" y2="${centerY}" stroke="#30363d" stroke-dasharray="4 4" />`,
+    `<text x="${centerX}" y="22" fill="#8b949e" font-size="12" text-anchor="middle">N</text>`,
+    `<text x="${width - 18}" y="${centerY + 4}" fill="#8b949e" font-size="12" text-anchor="middle">E</text>`,
+    `<text x="${centerX}" y="${height - 12}" fill="#8b949e" font-size="12" text-anchor="middle">S</text>`,
+    `<text x="18" y="${centerY + 4}" fill="#8b949e" font-size="12" text-anchor="middle">W</text>`,
+  ];
+
+  for (const point of points) {
+    const x = centerX + point.dxKm * scale;
+    const y = centerY - point.dyKm * scale;
+    const color = tempColor(point.temp);
+    const isLtac = point.stationId === 17128;
+    const arrow = arrowVectorFromWindDir(point.windDir);
+    const stationCode = isLtac ? 'LTAC' : point.label;
+    svgParts.push(
+      `<circle cx="${x}" cy="${y}" r="${isLtac ? 9 : 7}" fill="${color}" stroke="#0d1117" stroke-width="2" />`
+    );
+    if (arrow) {
+      const x2 = x + arrow.dx;
+      const y2 = y + arrow.dy;
+      svgParts.push(
+        `<line x1="${x}" y1="${y}" x2="${x2}" y2="${y2}" stroke="#c9d1d9" stroke-width="2" marker-end="url(#arrowhead)" />`
+      );
+    }
+    svgParts.push(
+      `<text x="${x}" y="${y - 14}" fill="#c9d1d9" font-size="12" text-anchor="middle">${stationCode}</text>`
+    );
+    svgParts.push(
+      `<text x="${x}" y="${y + 24}" fill="${color}" font-size="14" font-weight="700" text-anchor="middle">${fmtTempShort(point.temp)}</text>`
+    );
+    svgParts.push(
+      `<text x="${x}" y="${y + 40}" fill="#8b949e" font-size="11" text-anchor="middle">max ${point.dailyMax == null ? '--' : `${Number(point.dailyMax).toFixed(0)}°C`}</text>`
+    );
+  }
+
+  svgParts.splice(1, 0,
+    `<defs><marker id="arrowhead" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L6,3 z" fill="#c9d1d9" /></marker></defs>`
+  );
+  svgParts.push('</svg>');
+  el.innerHTML = svgParts.join('');
 }
 
 function applyImmediateMetarEvent(payload) {
@@ -795,6 +1082,7 @@ function updateStatus(snap) {
     ['Vis', fmtNum(aws.gorus, 'm', 0)],
     ['Cloud', fmtCloud(aws.kapalilik)],
   ]);
+  renderSpatialMap(snap);
   updateCharts();
 }
 

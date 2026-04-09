@@ -25,6 +25,7 @@ _HOURLY_SHAPE_URL = "https://servis.mgm.gov.tr/web/tahminler/saatlik?istno=17130
 _PROVINCE_BULK_URL = (
     f"https://servis.mgm.gov.tr/web/sondurumlar/ilTumSondurum?ilPlaka={ANKARA_PROVINCE_PLATE}"
 )
+_ANKARA_DISTRICTS_URL = "https://servis.mgm.gov.tr/web/merkezler/ililcesi?il=Ankara"
 
 
 class MGMClient:
@@ -49,6 +50,7 @@ class MGMClient:
             timeout=httpx.Timeout(10.0),
             headers=MGM_HEADERS,
         )
+        self._ankara_context_cache: dict[int, dict] | None = None
 
     async def fetch(self) -> tuple[Observation, float]:
         """Fetch the latest LTAC observation.
@@ -145,6 +147,86 @@ class MGMClient:
             ]
         except Exception:
             return []
+
+    async def fetch_ankara_context_locations(
+        self,
+        station_ids: tuple[int, ...],
+    ) -> list[dict]:
+        """Resolve selected Ankara stations to forecast/location metadata."""
+        if self._ankara_context_cache is None:
+            try:
+                response = await self._forecast_client.get(_ANKARA_DISTRICTS_URL)
+                response.raise_for_status()
+                data = json.loads(response.content)
+                if not data or not isinstance(data, list):
+                    return []
+                cache: dict[int, dict] = {}
+                for entry in data:
+                    try:
+                        station_id = int(entry.get("sondurumIstNo", 0))
+                    except (TypeError, ValueError):
+                        continue
+                    cache[station_id] = {
+                        "station_id": station_id,
+                        "daily_forecast_id": self._coerce_int(entry.get("gunlukTahminIstNo")),
+                        "hourly_forecast_id": self._coerce_int(entry.get("saatlikTahminIstNo")),
+                        "merkez_id": self._coerce_int(entry.get("merkezId")),
+                        "district_name": str(entry.get("ilce") or ""),
+                        "province_name": str(entry.get("il") or ""),
+                        "lat": self._coerce_float(entry.get("enlem")),
+                        "lon": self._coerce_float(entry.get("boylam")),
+                        "elevation_m": self._coerce_int(entry.get("yukseklik")),
+                    }
+                self._ankara_context_cache = cache
+            except Exception:
+                return []
+
+        if not self._ankara_context_cache:
+            return []
+
+        return [
+            self._ankara_context_cache[station_id]
+            for station_id in station_ids
+            if station_id in self._ankara_context_cache
+        ]
+
+    async def fetch_daily_forecast_by_merkez_id(
+        self,
+        merkez_id: int,
+    ) -> dict | None:
+        """Fetch the current daily forecast payload for a merkez/district."""
+        try:
+            response = await self._forecast_client.get(
+                f"https://servis.mgm.gov.tr/web/tahminler/gunluk?merkezid={merkez_id}"
+            )
+            response.raise_for_status()
+            data = json.loads(response.content)
+            if not data or not isinstance(data, list):
+                return None
+            payload = data[0]
+            if not isinstance(payload, dict):
+                return None
+            return payload
+        except Exception:
+            return None
+
+    @staticmethod
+    def _coerce_int(value: object) -> int | None:
+        try:
+            if value is None:
+                return None
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _coerce_float(value: object) -> float | None:
+        try:
+            if value is None:
+                return None
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     async def close(self) -> None:
         await self._client.aclose()

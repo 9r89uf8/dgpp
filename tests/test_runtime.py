@@ -233,6 +233,22 @@ class TestTempReplay:
                         "sicaklik": 13.0,
                     }
                 ],
+                "context_stations": [
+                    {
+                        "station_id": 17128,
+                        "label": "ESENBOGA",
+                        "district_name": "Esenboğa Havalimanı",
+                        "lat": 40.1240,
+                        "lon": 32.9992,
+                    }
+                ],
+                "regional_daily_context": [
+                    {
+                        "station_id": 17130,
+                        "label": "ANKARA",
+                        "forecast_daily_max": 11,
+                    }
+                ],
             },
         )
 
@@ -244,6 +260,7 @@ class TestTempReplay:
         assert rt.metar_history()[-1]["ddhhmmz"] == "081200Z"
         assert rt.latest_forecast_snapshot()["ltac_daily_max"] == 16
         assert rt.latest_forecast_snapshot()["neighbor_ring"][0]["label"] == "ESENBOGA"
+        assert rt.latest_forecast_snapshot()["regional_daily_context"][0]["label"] == "ANKARA"
 
     def test_runtime_falls_back_to_json_history_when_db_is_empty(self, tmp_path):
         state = MonitorState(state_dir=str(tmp_path / "state"))

@@ -14,12 +14,14 @@ MGM_SHAPE_FORECAST_ISTNO = 17130
 ANKARA_PROVINCE_PLATE = 6
 
 # Lightweight comparison ring around LTAC for the web dashboard.
-# These are fetched together from the Ankara province bulk AWS feed.
+# These are fetched together from the Ankara province bulk AWS feed and
+# matched against the official district lookup for context forecasts/map data.
 NEIGHBOR_RING_STATIONS = (
     {"station_id": 17128, "label": "ESENBOGA"},
     {"station_id": 18240, "label": "AKYURT"},
     {"station_id": 18243, "label": "PURSAKLAR"},
     {"station_id": 18242, "label": "CUBUK"},
+    {"station_id": 17130, "label": "ANKARA"},
 )
 
 # MGM API endpoint for Ankara Esenboğa Airport (LTAC) observations
