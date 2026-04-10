@@ -215,7 +215,7 @@
 <div class="chart-container chart-scroll"><div id="neighbor-chart"></div></div>
 <div class="chart-note">Neighbor ring uses the 5-minute Ankara province AWS bulk fetch for Esenboga, Akyurt, Pursaklar, Cubuk, and Ankara center. These are comparison lines, not bias-corrected temperatures.</div>
 <div class="chart-container chart-scroll"><div id="regional-forecast-chart"></div></div>
-<div class="chart-note">Regional daily forecast context shows LTAC airport daily max against Ankara, Akyurt, Pursaklar, and Cubuk district daily max forecasts. These are context lines, not replacements for the LTAC airport forecast.</div>
+<div class="chart-note">Regional daily forecast context shows LTAC airport daily max against Ankara, Akyurt, Pursaklar, and Cubuk district daily max forecasts. These are context lines, not replacements for the LTAC airport forecast. Distinct dash styles and right-edge labels help when stations share the same value.</div>
 <div class="map-panel"><div id="spatial-map"></div></div>
 <div class="chart-note">Spatial context is centered on Esenboga using official MGM coordinates for the selected stations. LTAC updates live; the surrounding stations refresh on the 5-minute province-context fetch.</div>
 <div class="chart-container chart-scroll"><div id="forecast-revision-chart"></div></div>
@@ -475,6 +475,13 @@ const REGIONAL_FORECAST_COLORS = {
   PURSAKLAR: '#3fb950',
   CUBUK: '#d2a8ff',
 };
+const REGIONAL_FORECAST_STYLES = {
+  LTAC: { dash: 'solid', marker: 'diamond-open', textPosition: 'top right' },
+  ANKARA: { dash: 'dash', marker: 'circle-open', textPosition: 'middle right' },
+  AKYURT: { dash: 'dot', marker: 'square-open', textPosition: 'bottom right' },
+  PURSAKLAR: { dash: 'dashdot', marker: 'triangle-up-open', textPosition: 'top left' },
+  CUBUK: { dash: 'longdash', marker: 'x-open', textPosition: 'bottom left' },
+};
 
 const chartLayout = {
   paper_bgcolor: '#0d1117', plot_bgcolor: '#0d1117',
@@ -545,6 +552,7 @@ function initCharts() {
 
   Plotly.newPlot('regional-forecast-chart', regionalForecastTraces, {
     ...chartLayout,
+    margin: { ...chartLayout.margin, r: 140 },
     title: { text: 'Regional Daily Max Forecast Context', font: { size: 13, color: '#8b949e' } },
     yaxis: { ...chartLayout.yaxis, title: '°C', automargin: true },
     height: 320,
@@ -765,15 +773,34 @@ function rebuildChartSeries() {
       const idxB = REGIONAL_FORECAST_ORDER.indexOf(b[0]);
       return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB);
     })
-    .map(([label, points]) => ({
-      x: points.map((point) => point.x),
-      y: points.map((point) => point.y),
-      name: label === 'LTAC' ? 'LTAC Airport' : label,
-      type: 'scatter',
-      mode: 'lines+markers',
-      line: { color: REGIONAL_FORECAST_COLORS[label] || '#8b949e', width: 2 },
-      marker: { size: 6 },
-    }));
+    .map(([label, points]) => {
+      const style = REGIONAL_FORECAST_STYLES[label] || {};
+      const displayName = label === 'LTAC' ? 'LTAC Airport' : label;
+      const text = new Array(points.length).fill('');
+      if (text.length > 0) {
+        text[text.length - 1] = displayName;
+      }
+      return {
+        x: points.map((point) => point.x),
+        y: points.map((point) => point.y),
+        text,
+        name: displayName,
+        type: 'scatter',
+        mode: 'lines+markers+text',
+        textposition: style.textPosition || 'middle right',
+        cliponaxis: false,
+        line: {
+          color: REGIONAL_FORECAST_COLORS[label] || '#8b949e',
+          width: 3,
+          dash: style.dash || 'solid',
+        },
+        marker: {
+          size: 7,
+          symbol: style.marker || 'circle-open',
+          color: REGIONAL_FORECAST_COLORS[label] || '#8b949e',
+        },
+      };
+    });
 }
 
 function updateForecastSeries(snap) {
@@ -841,6 +868,7 @@ function updateCharts() {
   }, { responsive: true });
   Plotly.react('regional-forecast-chart', regionalForecastTraces, {
     ...chartLayout,
+    margin: { ...chartLayout.margin, r: 140 },
     title: { text: 'Regional Daily Max Forecast Context', font: { size: 13, color: '#8b949e' } },
     yaxis: { ...chartLayout.yaxis, title: '°C', automargin: true },
     height: 320,
