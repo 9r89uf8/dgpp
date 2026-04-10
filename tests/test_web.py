@@ -136,14 +136,28 @@ def test_clear_history_endpoint_wipes_sqlite_history(tmp_path):
     app = create_app(rt)
     client = TestClient(app)
 
-    response = client.post("/api/admin/clear-history")
+    response = client.post(
+        "/api/admin/clear-history",
+        json={"confirm_text": "DELETE LTAC HISTORY"},
+    )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["ok"] is True
-    assert payload["cleared"]["sqlite_total_rows"] == 2
+    assert payload["cleared"]["sqlite_total_rows"] == 6
     assert payload["metar_history"] == []
     assert payload["aws_history"] == []
     assert payload["forecast_history"] == []
     assert client.get("/api/history/metar").json() == []
     assert client.get("/api/history/aws").json() == []
+
+
+def test_clear_history_endpoint_requires_confirmation_text(tmp_path):
+    rt = _make_runtime(tmp_path)
+    app = create_app(rt)
+    client = TestClient(app)
+
+    response = client.post("/api/admin/clear-history")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "confirmation required"

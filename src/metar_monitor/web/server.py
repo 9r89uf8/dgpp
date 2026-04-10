@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -62,7 +62,10 @@ def create_app(runtime) -> FastAPI:
         return rt.forecast_history(since=since, local_day=local_day, limit=limit)
 
     @app.post("/api/admin/clear-history")
-    async def clear_history():
+    async def clear_history(payload: dict | None = Body(default=None)):
+        confirm_text = str((payload or {}).get("confirm_text") or "").strip()
+        if confirm_text != "DELETE LTAC HISTORY":
+            raise HTTPException(status_code=400, detail="confirmation required")
         return rt.clear_persisted_history()
 
     @app.websocket("/ws")

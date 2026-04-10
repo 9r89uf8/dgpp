@@ -63,7 +63,10 @@
   #temp-chart,
   #neighbor-chart,
   #regional-forecast-chart,
-  #forecast-revision-chart {
+  #forecast-revision-chart,
+  #forecast-bucket-chart,
+  #wind-chart,
+  #cloud-chart {
     min-width: 1800px;
   }
   .chart-note {
@@ -217,10 +220,10 @@
 <div class="chart-note">Spatial context is centered on Esenboga using official MGM coordinates for the selected stations. LTAC updates live; the surrounding stations refresh on the 5-minute province-context fetch.</div>
 <div class="chart-container chart-scroll"><div id="forecast-revision-chart"></div></div>
 <div class="chart-note">Forecast revision history: red shows LTAC airport daily max, orange shows Ankara center 3-hour forecast peak temperature, and green shows the Ankara center forecast peak hour.</div>
-<div class="chart-container"><div id="forecast-bucket-chart"></div></div>
+<div class="chart-container chart-scroll"><div id="forecast-bucket-chart"></div></div>
 <div class="chart-note">Ankara 3-hour bucket revisions: x-axis is when we fetched the forecast, each line is a future valid bucket like 3:00 PM or 6:00 PM. When a bucket disappears after its valid time passes, its line stops.</div>
-<div class="chart-container"><div id="wind-chart"></div></div>
-<div class="chart-container"><div id="cloud-chart"></div></div>
+<div class="chart-container chart-scroll"><div id="wind-chart"></div></div>
+<div class="chart-container chart-scroll"><div id="cloud-chart"></div></div>
 <div class="chart-note">Cloud cover uses MGM `kapalilik` in oktas: 0 clear, 1-2 FEW, 3-4 SCT, 5-7 BKN, 8 OVC.</div>
 <div class="chart-container"><div id="hum-press-chart"></div></div>
 
@@ -1238,7 +1241,16 @@ function updateStatus(snap) {
 }
 
 async function clearHistory() {
-  if (!confirm('Delete all persisted LTAC history from SQLite? Live polling will keep running.')) {
+  const confirmPhrase = 'DELETE LTAC HISTORY';
+  const typed = prompt(
+    `Type ${confirmPhrase} to delete all persisted LTAC history from SQLite. Live polling will keep running.`
+  );
+  if (typed == null) {
+    setAdminStatus('Clear cancelled');
+    return;
+  }
+  if (typed.trim() !== confirmPhrase) {
+    setAdminStatus('Clear cancelled: confirmation text did not match');
     return;
   }
 
@@ -1247,7 +1259,11 @@ async function clearHistory() {
   setAdminStatus('Clearing...');
 
   try {
-    const response = await fetch('/api/admin/clear-history', { method: 'POST' });
+    const response = await fetch('/api/admin/clear-history', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm_text: confirmPhrase }),
+    });
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload.detail || 'request failed');
