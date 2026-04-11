@@ -46,6 +46,39 @@
     font-size: 13px;
   }
   .obs-row strong { color: #58a6ff; }
+  .obs-subtitle {
+    color: #8b949e;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 10px 0 6px;
+  }
+  .obs-history-list {
+    display: grid;
+    gap: 6px;
+    font-size: 13px;
+  }
+  .obs-history-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+    border-top: 1px solid #21262d;
+    padding-top: 6px;
+  }
+  .obs-history-left {
+    color: #c9d1d9;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .obs-history-right {
+    color: #8b949e;
+    white-space: nowrap;
+  }
+  .trend-up { color: #3fb950; }
+  .trend-down { color: #f85149; }
+  .trend-flat { color: #8b949e; }
   .diag-list {
     display: grid;
     gap: 6px;
@@ -246,6 +279,8 @@
     <h3>Latest AWS Observation</h3>
     <div id="latest-aws-time" class="obs-time">--</div>
     <div id="latest-aws-grid" class="obs-grid"></div>
+    <div class="obs-subtitle">Recent AWS Temps</div>
+    <div id="latest-aws-history" class="obs-history-list"></div>
   </div>
   <div class="obs-card">
     <h3>Nowcast Diagnostics</h3>
@@ -499,6 +534,21 @@ function parseMetarSummary(metar) {
 function renderObsGrid(targetId, rows) {
   document.getElementById(targetId).innerHTML = rows
     .map(([label, value]) => `<div class="obs-row"><strong>${label}:</strong> ${value}</div>`)
+    .join('');
+}
+
+function renderAwsHistoryList(targetId, entries) {
+  document.getElementById(targetId).innerHTML = entries
+    .map((entry) => `
+      <div class="obs-history-item">
+        <div class="obs-history-left">
+          <span><strong>${entry.label}</strong></span>
+          <span>${entry.timeLabel}</span>
+          <span>${entry.tempLabel}</span>
+        </div>
+        <div class="obs-history-right ${entry.deltaClass}">${entry.deltaLabel}</div>
+      </div>
+    `)
     .join('');
 }
 
@@ -1091,6 +1141,57 @@ function fmtSignedTempShort(val) {
   return `${Number(val) >= 0 ? '+' : ''}${Number(val).toFixed(1)}°C`;
 }
 
+function awsDeltaMeta(delta) {
+  if (delta == null || Number.isNaN(Number(delta))) {
+    return { deltaLabel: '', deltaClass: 'trend-flat' };
+  }
+  const amount = Number(delta);
+  if (amount > 0.05) {
+    return { deltaLabel: `↑ ${fmtSignedTempShort(amount)}`, deltaClass: 'trend-up' };
+  }
+  if (amount < -0.05) {
+    return { deltaLabel: `↓ ${fmtSignedTempShort(amount)}`, deltaClass: 'trend-down' };
+  }
+  return { deltaLabel: '→ 0.0°C', deltaClass: 'trend-flat' };
+}
+
+function buildRecentAwsEntries(snap) {
+  const todayBundle = ensureHistoryDay(todayAnkaraDayKey);
+  const byVeri = new Map();
+  for (const entry of (todayBundle.aws_history || [])) {
+    if (entry?.veri_zamani) {
+      byVeri.set(String(entry.veri_zamani), entry);
+    }
+  }
+  const currentObs = snap?.current_observation;
+  if (currentObs?.veri_zamani) {
+    byVeri.set(String(currentObs.veri_zamani), {
+      ...byVeri.get(String(currentObs.veri_zamani)),
+      ...currentObs,
+    });
+  }
+
+  const recent = Array.from(byVeri.values())
+    .filter((entry) => entry?.veri_zamani)
+    .sort((a, b) => String(b.veri_zamani).localeCompare(String(a.veri_zamani)))
+    .slice(0, 3);
+
+  return recent.map((entry, idx) => {
+    const older = recent[idx + 1] || null;
+    const delta = older && entry.sicaklik != null && older.sicaklik != null
+      ? Number(entry.sicaklik) - Number(older.sicaklik)
+      : null;
+    const deltaMeta = awsDeltaMeta(delta);
+    return {
+      label: idx === 0 ? 'Now' : `Prev ${idx}`,
+      timeLabel: formatLocalTime(entry.veri_zamani),
+      tempLabel: fmtTempShort(entry.sicaklik),
+      deltaLabel: idx === recent.length - 1 ? '' : deltaMeta.deltaLabel,
+      deltaClass: deltaMeta.deltaClass,
+    };
+  });
+}
+
 function tempColor(val) {
   if (val == null || val === -9999 || Number.isNaN(Number(val))) return '#8b949e';
   const temp = Number(val);
@@ -1414,6 +1515,20 @@ function updateStatus(snap) {
     ['Vis', fmtNum(aws.gorus, 'm', 0)],
     ['Cloud', fmtCloud(aws.kapalilik)],
   ]);
+  const recentAwsEntries = buildRecentAwsEntries(snap);
+  if (recentAwsEntries.length) {
+    renderAwsHistoryList('latest-aws-history', recentAwsEntries);
+  } else {
+    renderAwsHistoryList('latest-aws-history', [
+      {
+        label: 'Status',
+        timeLabel: 'Waiting for AWS history',
+        tempLabel: '',
+        deltaLabel: '',
+        deltaClass: 'trend-flat',
+      },
+    ]);
+  }
   const stateReasons = tt?.state_reasons || [];
   const forecastReasons = tt?.forecast_reasons || [];
   const regionalReasons = buildRegionalContextReasons(snap);
