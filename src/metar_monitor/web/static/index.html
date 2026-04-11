@@ -72,6 +72,35 @@
   .chart-note {
     margin: 0 20px 10px; color: #8b949e; font-size: 12px;
   }
+  .chart-toggle-bar {
+    margin: 0 20px 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .trace-toggle {
+    appearance: none;
+    border: 1px solid #30363d;
+    background: #161b22;
+    color: #c9d1d9;
+    border-radius: 999px;
+    padding: 5px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+  }
+  .trace-toggle:hover:not(:disabled) {
+    background: #1b2430;
+  }
+  .trace-toggle.is-hidden {
+    opacity: 0.5;
+    border-style: dashed;
+  }
+  .trace-toggle.is-active {
+    border-color: currentColor;
+    box-shadow: inset 0 0 0 1px currentColor;
+  }
   .map-panel {
     margin: 5px 20px 10px;
     background: #161b22;
@@ -215,7 +244,15 @@
 <div class="chart-container chart-scroll"><div id="neighbor-chart"></div></div>
 <div class="chart-note">Neighbor ring uses the 5-minute Ankara province AWS bulk fetch for Esenboga, Akyurt, Pursaklar, Cubuk, and Ankara center. These are comparison lines, not bias-corrected temperatures.</div>
 <div class="chart-container chart-scroll"><div id="regional-forecast-chart"></div></div>
-<div class="chart-note">Regional daily forecast context shows LTAC airport daily max against Ankara, Akyurt, Pursaklar, and Cubuk district daily max forecasts. These are context lines, not replacements for the LTAC airport forecast. Distinct dash styles and right-edge labels help when stations share the same value.</div>
+<div class="chart-toggle-bar" id="regional-forecast-controls">
+  <button class="trace-toggle is-active" data-regional-label="LTAC" data-trace-color="#f85149" type="button">LTAC Airport</button>
+  <button class="trace-toggle is-active" data-regional-label="ANKARA" data-trace-color="#ffa657" type="button">Ankara</button>
+  <button class="trace-toggle is-active" data-regional-label="AKYURT" data-trace-color="#58a6ff" type="button">Akyurt</button>
+  <button class="trace-toggle is-active" data-regional-label="PURSAKLAR" data-trace-color="#3fb950" type="button">Pursaklar</button>
+  <button class="trace-toggle is-active" data-regional-label="CUBUK" data-trace-color="#d2a8ff" type="button">Cubuk</button>
+  <button class="secondary-button" id="regional-forecast-show-all-btn" type="button">Show all</button>
+</div>
+<div class="chart-note">Regional daily forecast context shows LTAC airport daily max against Ankara, Akyurt, Pursaklar, and Cubuk district daily max forecasts. These are context lines, not replacements for the LTAC airport forecast. Use the buttons above to hide overlapping lines.</div>
 <div class="map-panel"><div id="spatial-map"></div></div>
 <div class="chart-note">Spatial context is centered on Esenboga using official MGM coordinates for the selected stations. LTAC updates live; the surrounding stations refresh on the 5-minute province-context fetch.</div>
 <div class="chart-container chart-scroll"><div id="forecast-revision-chart"></div></div>
@@ -238,6 +275,7 @@ let rawAwsHistory = [];
 let rawMetarHistory = [];
 let rawForecastHistory = [];
 const historyCache = new Map();
+const hiddenRegionalForecastLabels = new Set();
 
 function toLocal(iso) {
   const d = new Date(iso);
@@ -339,6 +377,46 @@ function upsertEntry(entries, entry, keyFn) {
     entries[idx] = entry;
   } else {
     entries.push(entry);
+  }
+}
+
+function syncRegionalForecastControls() {
+  document.querySelectorAll('[data-regional-label]').forEach((button) => {
+    const label = button.getAttribute('data-regional-label');
+    const color = button.getAttribute('data-trace-color') || '#c9d1d9';
+    const isHidden = hiddenRegionalForecastLabels.has(label);
+    button.classList.toggle('is-hidden', isHidden);
+    button.classList.toggle('is-active', !isHidden);
+    button.style.color = color;
+  });
+}
+
+function toggleRegionalForecastLabel(label) {
+  if (!label) return;
+  if (hiddenRegionalForecastLabels.has(label)) {
+    hiddenRegionalForecastLabels.delete(label);
+  } else {
+    hiddenRegionalForecastLabels.add(label);
+  }
+  syncRegionalForecastControls();
+  if (lastSnapshot) {
+    updateStatus(lastSnapshot);
+  } else {
+    rebuildChartSeries();
+    updateForecastSeries(null);
+    updateCharts();
+  }
+}
+
+function showAllRegionalForecastLabels() {
+  hiddenRegionalForecastLabels.clear();
+  syncRegionalForecastControls();
+  if (lastSnapshot) {
+    updateStatus(lastSnapshot);
+  } else {
+    rebuildChartSeries();
+    updateForecastSeries(null);
+    updateCharts();
   }
 }
 
@@ -743,7 +821,7 @@ function rebuildChartSeries() {
     const fetchedMinute = toChartMinute(snapshot.fetched_at);
     if (fetchedMinute == null) continue;
 
-    if (snapshot.ltac_daily_max != null) {
+    if (snapshot.ltac_daily_max != null && !hiddenRegionalForecastLabels.has('LTAC')) {
       if (!regionalForecastMap.has('LTAC')) {
         regionalForecastMap.set('LTAC', []);
       }
@@ -757,6 +835,7 @@ function rebuildChartSeries() {
       const label = String(point.label || '').toUpperCase();
       const temp = point.forecast_daily_max;
       if (!label || temp == null || temp === -9999) continue;
+      if (hiddenRegionalForecastLabels.has(label)) continue;
       if (!regionalForecastMap.has(label)) {
         regionalForecastMap.set(label, []);
       }
@@ -1396,7 +1475,14 @@ document.getElementById('history-day-input').addEventListener('change', (event) 
 document.getElementById('history-day-today-btn').addEventListener('click', () => {
   loadHistoryDay(todayAnkaraDayKey);
 });
+document.querySelectorAll('[data-regional-label]').forEach((button) => {
+  button.addEventListener('click', () => {
+    toggleRegionalForecastLabel(button.getAttribute('data-regional-label'));
+  });
+});
+document.getElementById('regional-forecast-show-all-btn').addEventListener('click', showAllRegionalForecastLabels);
 document.getElementById('clear-history-btn').addEventListener('click', clearHistory);
+syncRegionalForecastControls();
 updateHistoryStatus();
 connect();
 </script>
