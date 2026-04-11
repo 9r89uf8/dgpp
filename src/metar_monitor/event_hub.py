@@ -239,6 +239,8 @@ class EventHub:
                     "p_below_forecast": event.p_below_forecast,
                     "down_state": event.down_state,
                     "forecast_state": event.forecast_state,
+                    "state_reasons": event.state_reasons or [],
+                    "forecast_reasons": event.forecast_reasons or [],
                 },
                 lossless=is_state_change,
             ))

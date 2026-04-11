@@ -524,6 +524,8 @@ class Runtime:
                 "p_below_forecast": tracker.nowcast.p_below_forecast,
                 "down_state": tracker.nowcast.down_state.value,
                 "forecast_state": tracker.nowcast.forecast_state.value,
+                "state_reasons": tracker.nowcast.state_reasons or [],
+                "forecast_reasons": tracker.nowcast.forecast_reasons or [],
                 "current_temp": tracker.samples[-1].temp_c_raw if tracker.samples else None,
             },
             "latest_forecast_snapshot": self.latest_forecast_snapshot(),

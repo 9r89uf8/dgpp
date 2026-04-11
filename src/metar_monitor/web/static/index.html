@@ -46,6 +46,17 @@
     font-size: 13px;
   }
   .obs-row strong { color: #58a6ff; }
+  .diag-list {
+    display: grid;
+    gap: 6px;
+    font-size: 13px;
+  }
+  .diag-item {
+    color: #c9d1d9;
+  }
+  .diag-item strong {
+    color: #58a6ff;
+  }
   #clock { color: #8b949e; font-size: 13px; }
   #temp-state { font-weight: bold; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
   .state-RISING { background: #238636; color: white; }
@@ -235,6 +246,11 @@
     <h3>Latest AWS Observation</h3>
     <div id="latest-aws-time" class="obs-time">--</div>
     <div id="latest-aws-grid" class="obs-grid"></div>
+  </div>
+  <div class="obs-card">
+    <h3>Nowcast Diagnostics</h3>
+    <div id="diagnostics-time" class="obs-time">--</div>
+    <div id="diagnostics-list" class="diag-list"></div>
   </div>
 </div>
 
@@ -483,6 +499,12 @@ function parseMetarSummary(metar) {
 function renderObsGrid(targetId, rows) {
   document.getElementById(targetId).innerHTML = rows
     .map(([label, value]) => `<div class="obs-row"><strong>${label}:</strong> ${value}</div>`)
+    .join('');
+}
+
+function renderDiagList(targetId, rows) {
+  document.getElementById(targetId).innerHTML = rows
+    .map(([label, value]) => `<div class="diag-item"><strong>${label}:</strong> ${value}</div>`)
     .join('');
 }
 
@@ -1064,6 +1086,11 @@ function fmtTempShort(val) {
   return `${Number(val).toFixed(1)}°C`;
 }
 
+function fmtSignedTempShort(val) {
+  if (val == null || val === -9999) return '--';
+  return `${Number(val) >= 0 ? '+' : ''}${Number(val).toFixed(1)}°C`;
+}
+
 function tempColor(val) {
   if (val == null || val === -9999 || Number.isNaN(Number(val))) return '#8b949e';
   const temp = Number(val);
@@ -1100,6 +1127,48 @@ function arrowVectorFromWindDir(dirDeg, length = 18) {
     dx: Math.sin(rad) * length,
     dy: -Math.cos(rad) * length,
   };
+}
+
+function buildRegionalContextReasons(snap) {
+  const reasons = [];
+  const currentTemp = snap?.current_observation?.sicaklik;
+  const latestForecast = snap?.latest_forecast_snapshot || {};
+  const ring = latestForecast.neighbor_ring || [];
+  if (currentTemp == null || currentTemp === -9999 || !ring.length) {
+    return reasons;
+  }
+
+  const relevant = ring
+    .filter((point) => Number(point.station_id) !== 17128)
+    .map((point) => ({
+      label: stationDisplayName(point.label),
+      delta: point.sicaklik == null || point.sicaklik === -9999 ? null : Number(point.sicaklik) - Number(currentTemp),
+    }))
+    .filter((point) => point.delta != null);
+
+  if (!relevant.length) {
+    return reasons;
+  }
+
+  relevant.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+  const strongest = relevant[0];
+  reasons.push(`Largest live ring spread: ${strongest.label} ${fmtSignedTempShort(strongest.delta)} vs LTAC`);
+
+  const urban = relevant.find((point) => point.label === 'Ankara');
+  if (urban) {
+    reasons.push(`Urban-airport spread: Ankara ${fmtSignedTempShort(urban.delta)} vs LTAC`);
+  }
+
+  const warmers = relevant.filter((point) => point.delta > 0.3).map((point) => point.label);
+  const coolers = relevant.filter((point) => point.delta < -0.3).map((point) => point.label);
+  if (warmers.length) {
+    reasons.push(`Warmer than LTAC: ${warmers.join(', ')}`);
+  }
+  if (coolers.length) {
+    reasons.push(`Cooler than LTAC: ${coolers.join(', ')}`);
+  }
+
+  return reasons.slice(0, 3);
 }
 
 function renderSpatialMap(snap) {
@@ -1270,6 +1339,8 @@ function applyImmediateTempEvent(payload) {
     p_below_forecast: payload.p_below_forecast ?? lastSnapshot.temp_tracker.p_below_forecast,
     down_state: payload.down_state ?? lastSnapshot.temp_tracker.down_state,
     forecast_state: payload.forecast_state ?? lastSnapshot.temp_tracker.forecast_state,
+    state_reasons: payload.state_reasons ?? lastSnapshot.temp_tracker.state_reasons,
+    forecast_reasons: payload.forecast_reasons ?? lastSnapshot.temp_tracker.forecast_reasons,
     current_temp: payload.current_temp_raw ?? lastSnapshot.temp_tracker.current_temp,
   };
 
@@ -1343,6 +1414,25 @@ function updateStatus(snap) {
     ['Vis', fmtNum(aws.gorus, 'm', 0)],
     ['Cloud', fmtCloud(aws.kapalilik)],
   ]);
+  const stateReasons = tt?.state_reasons || [];
+  const forecastReasons = tt?.forecast_reasons || [];
+  const regionalReasons = buildRegionalContextReasons(snap);
+  const diagRows = [];
+  if (stateReasons.length) {
+    diagRows.push(['State', stateReasons.join(' | ')]);
+  }
+  if (forecastReasons.length) {
+    diagRows.push(['Forecast', forecastReasons.join(' | ')]);
+  }
+  if (regionalReasons.length) {
+    diagRows.push(['Regional', regionalReasons.join(' | ')]);
+  }
+  if (!diagRows.length) {
+    diagRows.push(['Status', 'Waiting for enough observations to explain the nowcast']);
+  }
+  document.getElementById('diagnostics-time').textContent =
+    `As of ${formatLocalTime(aws.veri_zamani || snap.current_metar_detected_at)}`;
+  renderDiagList('diagnostics-list', diagRows);
   renderSpatialMap(snap);
   updateCharts();
 }

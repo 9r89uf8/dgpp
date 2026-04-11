@@ -148,6 +148,10 @@ class TestNowcastOutputs:
             DownState.PROBABLY_DOWN,
             DownState.GOING_DOWN,
         )
+        assert tracker.nowcast.state_reasons
+        assert tracker.nowcast.forecast_reasons
+        assert any("Trend" in reason or "Remaining warming" in reason for reason in tracker.nowcast.state_reasons)
+        assert any("forecast" in reason.lower() for reason in tracker.nowcast.forecast_reasons)
 
 
 class TestStaleData:

@@ -83,6 +83,8 @@ class TempNowcast:
     shape_delta_remaining_c: float | None = None
     down_state: DownState = DownState.FLAT
     forecast_state: ForecastState = ForecastState.UNKNOWN
+    state_reasons: list[str] | None = None
+    forecast_reasons: list[str] | None = None
 
 
 @dataclass
@@ -104,6 +106,8 @@ class TempEvent:
     p_below_forecast: float | None = None
     down_state: str | None = None
     forecast_state: str | None = None
+    state_reasons: list[str] | None = None
+    forecast_reasons: list[str] | None = None
 
 
 class TempTracker:
@@ -567,7 +571,88 @@ class TempTracker:
         nowcast.shape_delta_remaining_c = self.shape_delta_remaining
         nowcast.down_state = self._update_down_state()
         nowcast.forecast_state = forecast_state
+        nowcast.state_reasons = self._build_state_reasons(nowcast)
+        nowcast.forecast_reasons = self._build_forecast_reasons(nowcast)
         self.nowcast = nowcast
+
+    def _fmt_signed(self, value: float | None) -> str | None:
+        if value is None:
+            return None
+        return f"{value:+.1f}C"
+
+    def _build_state_reasons(self, nowcast: TempNowcast) -> list[str]:
+        reasons: list[str] = []
+
+        slope_10m = self.trend_10m
+        slope_30m = self.trend_30m
+        drop = self.drop_from_max
+        mins = self.minutes_since_max
+        remaining_gain = nowcast.remaining_gain_c
+        shape_gain = nowcast.shape_delta_remaining_c
+        noise = nowcast.noise_30m or MIN_NOISE_C
+
+        if slope_10m is not None or slope_30m is not None:
+            parts: list[str] = []
+            if slope_10m is not None:
+                parts.append(f"10m {self._fmt_signed(slope_10m)}")
+            if slope_30m is not None:
+                parts.append(f"30m {self._fmt_signed(slope_30m)}")
+            if parts:
+                reasons.append("Trend " + ", ".join(parts))
+
+        if remaining_gain is not None:
+            reasons.append(f"Remaining warming estimate {remaining_gain:.1f}C")
+
+        if drop is not None:
+            reasons.append(f"Drop from today's high {drop:.1f}C")
+
+        if mins is not None:
+            reasons.append(f"{mins:.0f}m since last new high")
+
+        if shape_gain is not None:
+            reasons.append(f"Ankara shape upside left {shape_gain:.1f}C")
+
+        if nowcast.p_reached_max is not None:
+            if nowcast.p_reached_max >= 0.80:
+                reasons.append("Near-zero warming signal is strong")
+            elif nowcast.p_reached_max <= 0.40:
+                reasons.append("Still looks like warming room remains")
+
+        if nowcast.p_going_down is not None:
+            if nowcast.p_going_down >= 0.70:
+                reasons.append("Short-horizon cooling signal is strong")
+            elif nowcast.p_going_down <= 0.35 and slope_10m is not None:
+                reasons.append("Short-horizon cooling signal is weak")
+
+        if drop is not None and drop <= noise:
+            reasons.append("Current temperature is still near today's high")
+
+        return reasons[:5]
+
+    def _build_forecast_reasons(self, nowcast: TempNowcast) -> list[str]:
+        reasons: list[str] = []
+        final_est = nowcast.final_max_estimate_c
+        forecast_max = self.forecast_daily_max
+
+        if final_est is not None:
+            reasons.append(f"Estimated final max {final_est:.1f}C")
+
+        if forecast_max is not None:
+            reasons.append(f"LTAC forecast max {forecast_max:.1f}C")
+
+        if final_est is not None and forecast_max is not None:
+            gap = final_est - forecast_max
+            reasons.append(f"Estimate vs forecast {gap:+.1f}C")
+
+        if nowcast.p_above_forecast is not None and nowcast.p_below_forecast is not None:
+            if nowcast.p_above_forecast >= 0.70:
+                reasons.append("Current signals lean above forecast")
+            elif nowcast.p_below_forecast >= 0.70:
+                reasons.append("Current signals lean below forecast")
+            else:
+                reasons.append("Current signals are near the forecast band")
+
+        return reasons[:4]
 
     @staticmethod
     def _is_daytime(source_utc: datetime) -> bool:
@@ -604,6 +689,8 @@ class TempTracker:
             p_below_forecast=self.nowcast.p_below_forecast,
             down_state=self.nowcast.down_state.value,
             forecast_state=self.nowcast.forecast_state.value,
+            state_reasons=list(self.nowcast.state_reasons or []),
+            forecast_reasons=list(self.nowcast.forecast_reasons or []),
         )
 
     def _evaluate_state(self, sample: TempSample) -> TempEvent | None:
